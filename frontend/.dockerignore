@@ -1,0 +1,73 @@
+# ============================================================================
+# Docker Ignore - Frontend
+# Reduces Docker build context and image size
+# ============================================================================
+
+# Node
+node_modules/
+npm-debug.log
+package-lock.json.bak
+yarn.lock
+
+# Build
+dist/
+build/
+.next/
+
+# Testing
+coverage/
+.jest/
+.nyc_output/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+docs/
+README.md
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.circleci/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Cache
+.cache/
+.parcel-cache/
+
+# Other
+*.bak
+*.tmp
+.history/
+.vscode-test/
+
+# Python (if any)
+__pycache__
+*.pyc
+venv/
+.pytest_cache/
+
+# Backend files (not needed for frontend image)
+backend/
+*.sqlite3
+manage.py

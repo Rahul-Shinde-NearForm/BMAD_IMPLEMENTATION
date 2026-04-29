@@ -1,0 +1,45 @@
+installation:
+  version: 6.6.0
+  installDate: 2026-04-28T17:37:38.852Z
+  lastUpdated: 2026-04-29T09:28:12.836Z
+modules:
+  - name: core
+    version: 6.6.0
+    installDate: 2026-04-28T17:37:29.820Z
+    lastUpdated: 2026-04-29T09:28:12.760Z
+    source: built-in
+    npmPackage: null
+    repoUrl: null
+  - name: bmm
+    version: 6.6.0
+    installDate: 2026-04-28T17:37:29.773Z
+    lastUpdated: 2026-04-29T09:28:12.761Z
+    source: built-in
+    npmPackage: null
+    repoUrl: null
+  - name: suno
+    version: v1.7.0
+    installDate: 2026-04-28T17:37:31.481Z
+    lastUpdated: 2026-04-29T09:28:12.800Z
+    source: community
+    npmPackage: null
+    repoUrl: https://github.com/zarlor/suno-band-manager
+    channel: stable
+    sha: da591c977923e8cf0c9eeb8071ab50034f9e588d
+    registryApprovedTag: v1.7.0
+    registryApprovedSha: da591c977923e8cf0c9eeb8071ab50034f9e588d
+  - name: wds
+    version: v0.1.0
+    installDate: 2026-04-28T17:37:34.512Z
+    lastUpdated: 2026-04-29T09:28:12.836Z
+    source: community
+    npmPackage: bmad-method-wds-expansion
+    repoUrl: https://github.com/bmad-code-org/bmad-method-wds-expansion
+    channel: stable
+    sha: 50312755ca93d6667f9a9087cfe72cfd378b5329
+    registryApprovedTag: v0.1.0
+ides:
+  - claude-code
+  - codex
+  - cursor
+  - github-copilot

@@ -1,0 +1,88 @@
+# ============================================================================
+# Docker Ignore - Backend
+# Reduces Docker build context and image size
+# ============================================================================
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.project
+.pydevproject
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+docs/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Database
+*.sqlite3
+*.sqlite
+db.sqlite3
+
+# Logs
+*.log
+logs/
+
+# Media files (unless needed in production)
+media/
+uploads/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.circleci/
+
+# Other
+*.bak
+*.tmp
+node_modules/
+npm-debug.log

@@ -1,0 +1,178 @@
+name: opd-management-system
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: opd-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-opd_management}
+      POSTGRES_USER: ${DB_USER:-opd_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-opd_user} -d ${DB_NAME:-opd_management}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - opd_net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: opd-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings}
+      DEBUG: ${DEBUG:-False}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-change-me-in-production}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1,backend,frontend}
+      DB_ENGINE: ${DB_ENGINE:-postgresql}
+      DB_NAME: ${DB_NAME:-opd_management}
+      DB_USER: ${DB_USER:-opd_user}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      DB_HOST: ${DB_HOST:-db}
+      DB_PORT: ${DB_PORT:-5432}
+      DATABASE_URL: postgresql://${DB_USER:-opd_user}:${DB_PASSWORD:-changeme}@${DB_HOST:-db}:${DB_PORT:-5432}/${DB_NAME:-opd_management}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - backend_static:/app/staticfiles
+      - backend_media:/app/media
+      - backend_logs:/app/logs
+    ports:
+      - "8000:8000"
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py collectstatic --noinput &&
+             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-3} --timeout 60 --access-logfile - --error-logfile - --capture-output"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready/', timeout=5)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - opd_net
+
+  backend-dev:
+    profiles: ["dev"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: opd-backend-dev
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      ENVIRONMENT: development
+      DEBUG: "True"
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-only-key}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1,backend-dev}
+      DB_ENGINE: sqlite3
+      DB_NAME: /app/db.sqlite3
+    volumes:
+      - ./backend:/app
+      - backend_static:/app/staticfiles
+      - backend_media:/app/media
+      - backend_logs:/app/logs
+    ports:
+      - "8001:8000"
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py runserver 0.0.0.0:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live/', timeout=5)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - opd_net
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: opd-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "80:8080"
+    volumes:
+      - frontend_logs:/var/log/nginx
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - opd_net
+
+  redis:
+    image: redis:7-alpine
+    container_name: opd-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - opd_net
+
+  test-runner:
+    profiles: ["test"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: opd-test-runner
+    env_file:
+      - .env
+    environment:
+      ENVIRONMENT: test
+      DEBUG: "False"
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-test-only-key}
+      DB_ENGINE: sqlite3
+      TEST_DB_NAME: /tmp/test_db.sqlite3
+    volumes:
+      - ./backend:/app
+      - ./tests:/tests
+    working_dir: /app
+    command: >
+      sh -c "python manage.py migrate &&
+             pytest /tests -q"
+    networks:
+      - opd_net
+
+networks:
+  opd_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  backend_static:
+  backend_media:
+  backend_logs:
+  frontend_logs:
+  redis_data:

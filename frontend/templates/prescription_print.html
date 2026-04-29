@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Prescription {{ rx_number }}</title>
+    <style>
+        body {
+            font-family: "Times New Roman", serif;
+            margin: 20px;
+            color: #111;
+        }
+
+        .header {
+            border-bottom: 2px solid #222;
+            padding-bottom: 8px;
+            margin-bottom: 12px;
+        }
+
+        .row {
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .small {
+            font-size: 12px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        th,
+        td {
+            border: 1px solid #444;
+            padding: 6px;
+            font-size: 13px;
+        }
+
+        th {
+            background: #f2f2f2;
+        }
+
+        .section {
+            margin-top: 12px;
+        }
+
+        @media print {
+            .no-print {
+                display: none;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <h2 style="margin: 0;">{{ clinic_name|default:"OPD Clinic" }}</h2>
+        <div>{{ clinic_address }}</div>
+        <div class="row">
+            <div>Dr. {{ doctor_name }} ({{ doctor_specialty }})</div>
+            <div>Rx No: {{ rx_number }}</div>
+        </div>
+        <div class="row small">
+            <div>{{ doctor_qualification }} | Reg No: {{ doctor_reg_number }}</div>
+            <div>Date: {{ issued_at|date:"d/m/Y H:i" }}</div>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="row">
+            <div><strong>Patient:</strong> {{ patient_name }}</div>
+        </div>
+        <div class="row">
+            <div><strong>Age/Sex:</strong> {{ patient_age }} / {{ patient_gender }}</div>
+            <div><strong>Mobile:</strong> {{ patient_phone }}</div>
+        </div>
+        <div class="row">
+            <div><strong>Weight:</strong> {{ patient_weight_kg|default:"-" }} kg</div>
+            <div><strong>Validity:</strong> {{ validity_days }} days</div>
+        </div>
+    </div>
+
+    <div class="section">
+        <strong>Diagnosis:</strong> {{ diagnosis }}
+    </div>
+
+    <div class="section">
+        <strong>Rx</strong>
+        <table>
+            <thead>
+                <tr>
+                    <th>S.No</th>
+                    <th>Medicine</th>
+                    <th>Dose</th>
+                    <th>Frequency</th>
+                    <th>Timing</th>
+                    <th>Route</th>
+                    <th>Duration</th>
+                    <th>Instructions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in items %}
+                <tr>
+                    <td>{{ forloop.counter }}</td>
+                    <td>{{ item.drug }}</td>
+                    <td>{{ item.dose }}</td>
+                    <td>{{ item.frequency }}</td>
+                    <td>{{ item.timing }}</td>
+                    <td>{{ item.route }}</td>
+                    <td>{{ item.duration }}</td>
+                    <td>{{ item.instructions }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <strong>Special Instructions:</strong> {{ special_instructions|default:"Nil" }}
+    </div>
+
+    <div class="section small">
+        Issued by: {{ issued_by }}
+    </div>
+
+    <div class="no-print" style="margin-top: 16px;">
+        <button onclick="window.print()">Print</button>
+    </div>
+</body>
+
+</html>

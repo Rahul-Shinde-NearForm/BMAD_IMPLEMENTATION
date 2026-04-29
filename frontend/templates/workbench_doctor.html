@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Doctor Workbench</title>
+    <link rel="stylesheet" href="/static/css/app.css" />
+</head>
+
+<body>
+    <main class="container">
+        <h1>Doctor Workbench</h1>
+        <p>Doctor console for today's OPD list, consultation actions, prescription, orders, and queue flow.</p>
+
+        <section class="toolbar">
+            <a class="btn-link" href="/">Back to Home</a>
+        </section>
+
+        <section>
+            <h2>1. Today's Appointments</h2>
+            <form id="doctorTodayForm" class="form-inline">
+                <label>Doctor ID <input type="number" name="doctor_id" min="1" required /></label>
+                <button type="submit">Load Today Appointments</button>
+            </form>
+            <pre id="doctorTodayResult" class="result-box"></pre>
+        </section>
+
+        <section>
+            <h2>2. Complete Appointment</h2>
+            <form id="appointmentCompleteForm" class="form-inline">
+                <label>Appointment ID <input type="number" name="appointment_id" min="1" required /></label>
+                <button type="submit">Mark Completed</button>
+            </form>
+            <pre id="appointmentCompleteResult" class="result-box"></pre>
+        </section>
+
+        <section>
+            <h2>3. Consultation Draft and Finalize</h2>
+            <form id="consultationDraftForm" class="form-grid">
+                <label>Appointment ID <input type="number" name="appointment_id" min="1" required /></label>
+                <label>Chief Complaint <input type="text" name="chief_complaint" /></label>
+                <label>Findings <input type="text" name="findings" /></label>
+                <label>Diagnosis <input type="text" name="diagnosis" /></label>
+                <label>Notes <input type="text" name="notes" /></label>
+                <label>Follow-up Date <input type="date" name="follow_up_date" /></label>
+                <div><button type="submit">Save Draft</button></div>
+            </form>
+            <pre id="consultationDraftResult" class="result-box"></pre>
+
+            <form id="consultationFinalizeForm" class="form-inline" style="margin-top: 0.75rem;">
+                <label>Consultation ID <input type="number" name="consultation_id" min="1" required /></label>
+                <button type="submit">Finalize Consultation</button>
+            </form>
+            <pre id="consultationFinalizeResult" class="result-box"></pre>
+        </section>
+
+        <section>
+            <h2>4. Vitals and Medical Order</h2>
+            <form id="vitalsForm" class="form-grid">
+                <label>Consultation ID <input type="number" name="consultation_id" min="1" required /></label>
+                <label>Temperature (C) <input type="number" step="0.1" name="temperature_c" /></label>
+                <label>Pulse (bpm) <input type="number" name="pulse_bpm" /></label>
+                <label>BP Systolic <input type="number" name="bp_systolic" /></label>
+                <label>BP Diastolic <input type="number" name="bp_diastolic" /></label>
+                <label>SpO2 (%) <input type="number" name="spo2_pct" /></label>
+                <label>Weight (kg) <input type="number" step="0.01" name="weight_kg" /></label>
+                <label>Height (cm) <input type="number" step="0.01" name="height_cm" /></label>
+                <div><button type="submit">Save Vitals</button></div>
+            </form>
+            <pre id="vitalsResult" class="result-box"></pre>
+
+            <form id="orderForm" class="form-grid" style="margin-top: 0.75rem;">
+                <label>Consultation ID <input type="number" name="consultation_id" min="1" required /></label>
+                <label>Order Type
+                    <select name="order_type">
+                        <option value="LAB">LAB</option>
+                        <option value="RADIOLOGY">RADIOLOGY</option>
+                    </select>
+                </label>
+                <label>Description <input type="text" name="description" required /></label>
+                <div><button type="submit">Create Order</button></div>
+            </form>
+            <pre id="orderResult" class="result-box"></pre>
+        </section>
+
+        <section>
+            <h2>5. Prescription (Indian OPD)</h2>
+            <form id="prescriptionForm" class="form-grid">
+                <label>Consultation ID <input type="number" name="consultation_id" min="1" required /></label>
+                <label>Payload JSON
+                    <textarea name="payload"
+                        rows="8">{"items":[{"drug":"Amlodipine","dosage_form":"Tablet","strength":"5mg","dose":"1 tablet","frequency":"OD","duration":"30 days","timing":"after_food","route":"oral","instructions":"Take after dinner"}],"doctor_qualification":"MBBS, MD","doctor_reg_number":"MH-00001","clinic_name":"City OPD","clinic_address":"Main Road","special_instructions":"Follow up in 2 weeks","validity_days":30}</textarea>
+                </label>
+                <div><button type="submit">Issue Prescription</button></div>
+            </form>
+            <pre id="prescriptionResult" class="result-box"></pre>
+
+            <form id="prescriptionPrintForm" class="form-inline" style="margin-top: 0.75rem;">
+                <label>Consultation ID <input type="number" name="consultation_id" min="1" required /></label>
+                <button type="submit">Open Printable Prescription</button>
+            </form>
+        </section>
+
+        <section>
+            <h2>6. Queue Actions</h2>
+            <form id="queueBoardForm" class="form-inline">
+                <label>Doctor ID <input type="number" name="doctor_id" min="1" required /></label>
+                <label>Slot Date <input type="date" name="slot_date" required /></label>
+                <button type="submit">View Queue Board</button>
+            </form>
+            <pre id="queueBoardResult" class="result-box"></pre>
+
+            <form id="queueCallNextForm" class="form-inline" style="margin-top: 0.75rem;">
+                <label>Doctor ID <input type="number" name="doctor_id" min="1" required /></label>
+                <label>Slot Date <input type="date" name="slot_date" required /></label>
+                <button type="submit">Call Next</button>
+            </form>
+            <pre id="queueCallNextResult" class="result-box"></pre>
+        </section>
+
+        <script>
+            function getCSRFToken() {
+                const match = document.cookie.match(/csrftoken=([^;]+)/);
+                return match ? match[1] : "";
+            }
+
+            async function doGet(url, targetId) {
+                const res = await fetch(url, { credentials: "same-origin" });
+                const text = await res.text();
+                document.getElementById(targetId).textContent = text;
+            }
+
+            async function doPost(url, formData, targetId) {
+                const body = new URLSearchParams(formData);
+                const res = await fetch(url, {
+                    method: "POST",
+                    headers: {
+                        "X-CSRFToken": getCSRFToken(),
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    },
+                    body,
+                    credentials: "same-origin",
+                });
+                const text = await res.text();
+                document.getElementById(targetId).textContent = text;
+            }
+
+            document.getElementById("doctorTodayForm").addEventListener("submit", (e) => {
+                e.preventDefault();
+                const params = new URLSearchParams(new FormData(e.target));
+                doGet(`/api/doctors/appointments/today/?${params.toString()}`, "doctorTodayResult");
+            });
+
+            document.getElementById("appointmentCompleteForm").addEventListener("submit", (e) => {
+                e.preventDefault();
+                const id = new FormData(e.target).get("appointment_id");
+                doPost(`/api/appointments/${id}/complete/`, new FormData(), "appointmentCompleteResult");
+            });
+
+            document.getElementById("consultationDraftForm").addEventListener("submit", (e) => {
+                e.preventDefault();
+                const fd = new FormData(e.target);
+                const appointmentId = fd.get("appointment_id");
+                fd.delete("appointment_id");
+                doPost(`/api/consultations/appointment/${appointmentId}/draft/`, fd, "consultationDraftResult");
+            });
+
+            document.getElementById("consultationFinalizeForm").addEventListener("submit", (e) => {
+                e.preventDefault();
+                const id = new FormData(e.target).get("consultation_id");
+                doPost(`/api/consultations/${id}/finalize/`, new FormData(), "consultationFinalizeResult");
+            });
+
+            document.getElementById("vitalsForm").addEventListener("submit", (e) => {
+                e.preventDefault();
+                const fd = new FormData(e.target);
+                const consultationId = fd.get("consultation_id");
+                fd.delete("consultation_id");
+                doPost(`/api/consultations/${consultationId}/vitals/`, fd, "vitalsResult");
+            });
+
+            document.getElementById("orderForm").addEventListener("submit", (e) => {
+                e.preventDefault();
+                const fd = new FormData(e.target);
+                const consultationId = fd.get("consultation_id");
+                fd.delete("consultation_id");
+                doPost(`/api/consultations/${consultationId}/orders/`, fd, "orderResult");
+            });
+
+            document.getElementById("prescriptionForm").addEventListener("submit", async (e) => {
+                e.preventDefault();
+                const fd = new FormData(e.target);
+                const consultationId = fd.get("consultation_id");
+                let payload = {};
+                try {
+                    payload = JSON.parse(fd.get("payload"));
+                } catch {
+                    document.getElementById("prescriptionResult").textContent = '{"error":"invalid_json"}';
+                    return;
+                }
+                const res = await fetch(`/api/consultations/${consultationId}/prescription/`, {
+                    method: "POST",
+                    headers: {
+                        "X-CSRFToken": getCSRFToken(),
+                        "Content-Type": "application/json",
+                    },
+                    credentials: "same-origin",
+                    body: JSON.stringify(payload),
+                });
+                const text = await res.text();
+                document.getElementById("prescriptionResult").textContent = text;
+            });
+
+            document.getElementById("prescriptionPrintForm").addEventListener("submit", (e) => {
+                e.preventDefault();
+                const consultationId = new FormData(e.target).get("consultation_id");
+                window.open(`/consultations/${consultationId}/prescription/print/`, "_blank");
+            });
+
+            document.getElementById("queueBoardForm").addEventListener("submit", (e) => {
+                e.preventDefault();
+                const params = new URLSearchParams(new FormData(e.target));
+                doGet(`/api/queue/board/?${params.toString()}`, "queueBoardResult");
+            });
+
+            document.getElementById("queueCallNextForm").addEventListener("submit", (e) => {
+                e.preventDefault();
+                doPost(`/api/queue/call-next/`, new FormData(e.target), "queueCallNextResult");
+            });
+        </script>
+    </main>
+</body>
+
+</html>

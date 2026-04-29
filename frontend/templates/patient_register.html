@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Patient Registration</title>
+    <link rel="stylesheet" href="/static/css/app.css" />
+</head>
+
+<body>
+    <main class="container">
+        <h1>Patient Registration</h1>
+        <form method="post" action="/api/patients/register/">
+            {% csrf_token %}
+            {{ form.as_p }}
+            <button type="submit">Register</button>
+        </form>
+    </main>
+</body>
+
+</html>

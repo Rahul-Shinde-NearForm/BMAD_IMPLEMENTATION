@@ -1,0 +1,11 @@
+{
+    "name": "opd-management-system",
+    "private": true,
+    "scripts": {
+        "dev": "./.venv/bin/python backend/manage.py runserver",
+        "test": "./.venv/bin/pytest",
+        "test:unit": "./.venv/bin/pytest tests/unit -q",
+        "test:integration": "./.venv/bin/pytest tests/integration -q",
+        "test:e2e": "./.venv/bin/pytest tests/e2e -q"
+    }
+}

@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Reception Workbench</title>
+    <link rel="stylesheet" href="/static/css/app.css" />
+</head>
+
+<body>
+    <main class="container">
+        <h1>Reception Workbench</h1>
+        <p>Indian OPD front-desk console for registration, repeat visit tracking, booking, and reminder calls.</p>
+
+        <section class="toolbar">
+            <a class="btn-link" href="/patients/register/">Open Patient Registration Form</a>
+            <a class="btn-link" href="/">Back to Home</a>
+        </section>
+
+        <section>
+            <h2>1. Search Patient</h2>
+            <form id="patientSearchForm" class="form-grid">
+                <label>Mobile <input type="text" name="phone" placeholder="10-digit mobile" /></label>
+                <label>Name <input type="text" name="name" placeholder="First Last" /></label>
+                <label>DOB <input type="date" name="dob" /></label>
+                <label>MRN (optional) <input type="text" name="mrn" /></label>
+                <div><button type="submit">Search</button></div>
+            </form>
+            <pre id="patientSearchResult" class="result-box"></pre>
+        </section>
+
+        <section>
+            <h2>2. Repeat Visit OPD History</h2>
+            <form id="opdHistoryForm" class="form-inline">
+                <label>Patient ID <input type="number" name="patient_id" min="1" required /></label>
+                <button type="submit">Get OPD History</button>
+            </form>
+            <pre id="opdHistoryResult" class="result-box"></pre>
+        </section>
+
+        <section>
+            <h2>3. Edit Patient Details</h2>
+            <form id="patientEditForm" class="form-grid">
+                <label>Patient ID <input type="number" name="patient_id" min="1" required /></label>
+                <label>First Name <input type="text" name="first_name" required /></label>
+                <label>Last Name <input type="text" name="last_name" required /></label>
+                <label>DOB <input type="date" name="dob" required /></label>
+                <label>Gender
+                    <select name="gender" required>
+                        <option value="M">Male</option>
+                        <option value="F">Female</option>
+                        <option value="O">Other</option>
+                    </select>
+                </label>
+                <label>Phone <input type="text" name="phone" required /></label>
+                <label>National ID <input type="text" name="national_id" /></label>
+                <label>Address <input type="text" name="address_line1" /></label>
+                <label>City <input type="text" name="city" /></label>
+                <label>State <input type="text" name="state" /></label>
+                <label>Postal Code <input type="text" name="postal_code" /></label>
+                <div><button type="submit">Update Patient</button></div>
+            </form>
+            <pre id="patientEditResult" class="result-box"></pre>
+        </section>
+
+        <section>
+            <h2>4. Book Appointment (OPD Number Auto Generated)</h2>
+            <form id="appointmentBookForm" class="form-grid">
+                <label>Patient ID <input type="number" name="patient_id" min="1" required /></label>
+                <label>Doctor ID <input type="number" name="doctor_id" min="1" required /></label>
+                <label>Slot Date <input type="date" name="slot_date" required /></label>
+                <label>Start Time <input type="time" name="start_time" required /></label>
+                <label>End Time <input type="time" name="end_time" required /></label>
+                <label>Visit Type
+                    <select name="visit_type">
+                        <option value="NEW">NEW</option>
+                        <option value="FOLLOW_UP">FOLLOW_UP</option>
+                    </select>
+                </label>
+                <label>Channel
+                    <select name="channel">
+                        <option value="WALK_IN">WALK_IN</option>
+                        <option value="PHONE">PHONE</option>
+                        <option value="ONLINE">ONLINE</option>
+                    </select>
+                </label>
+                <div><button type="submit">Book Appointment</button></div>
+            </form>
+            <pre id="appointmentBookResult" class="result-box"></pre>
+        </section>
+
+        <section>
+            <h2>5. Tomorrow Reminder Call List</h2>
+            <form id="reminderForm" class="form-inline">
+                <label>Doctor ID (optional) <input type="number" name="doctor_id" min="1" /></label>
+                <button type="submit">Load Tomorrow List</button>
+            </form>
+            <pre id="reminderResult" class="result-box"></pre>
+        </section>
+
+        <script>
+            function getCSRFToken() {
+                const match = document.cookie.match(/csrftoken=([^;]+)/);
+                return match ? match[1] : "";
+            }
+
+            async function doGet(url, targetId) {
+                const res = await fetch(url, { credentials: "same-origin" });
+                const text = await res.text();
+                document.getElementById(targetId).textContent = text;
+            }
+
+            async function doPost(url, formData, targetId) {
+                const body = new URLSearchParams(formData);
+                const res = await fetch(url, {
+                    method: "POST",
+                    headers: {
+                        "X-CSRFToken": getCSRFToken(),
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    },
+                    body,
+                    credentials: "same-origin",
+                });
+                const text = await res.text();
+                document.getElementById(targetId).textContent = text;
+            }
+
+            document.getElementById("patientSearchForm").addEventListener("submit", (e) => {
+                e.preventDefault();
+                const params = new URLSearchParams(new FormData(e.target));
+                doGet(`/api/patients/search/?${params.toString()}`, "patientSearchResult");
+            });
+
+            document.getElementById("opdHistoryForm").addEventListener("submit", (e) => {
+                e.preventDefault();
+                const patientId = new FormData(e.target).get("patient_id");
+                doGet(`/api/patients/${patientId}/opd-history/`, "opdHistoryResult");
+            });
+
+            document.getElementById("patientEditForm").addEventListener("submit", (e) => {
+                e.preventDefault();
+                const fd = new FormData(e.target);
+                const patientId = fd.get("patient_id");
+                fd.delete("patient_id");
+                doPost(`/api/patients/${patientId}/update/`, fd, "patientEditResult");
+            });
+
+            document.getElementById("appointmentBookForm").addEventListener("submit", (e) => {
+                e.preventDefault();
+                doPost(`/api/appointments/book/`, new FormData(e.target), "appointmentBookResult");
+            });
+
+            document.getElementById("reminderForm").addEventListener("submit", (e) => {
+                e.preventDefault();
+                const params = new URLSearchParams(new FormData(e.target));
+                doGet(`/api/reports/tomorrow-patients/?${params.toString()}`, "reminderResult");
+            });
+        </script>
+    </main>
+</body>
+
+</html>
