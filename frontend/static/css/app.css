@@ -93,11 +93,58 @@ button {
 .result-box {
     margin-top: 0.6rem;
     min-height: 40px;
-    max-height: 240px;
+    max-height: 320px;
     overflow: auto;
-    background: #0f172a;
-    color: #e2e8f0;
-    padding: 0.75rem;
+    background: #f0f4ff;
+    color: #1a2b4a;
+    padding: 0.85rem 1rem;
     border-radius: 8px;
-    font-size: 0.82rem;
+    font-size: 0.95rem;
+    font-weight: 500;
+    border: 1px solid #c6d7fa;
+    line-height: 1.6;
+}
+
+.result-box.result-success {
+    background: #e9f8ef;
+    color: #0a4a28;
+    border-color: #6fcf97;
+    font-weight: 700;
+}
+
+.result-box.result-error {
+    background: #fff0f0;
+    color: #7f1d1d;
+    border-color: #f5c2c7;
+    font-weight: 700;
+}
+
+.patient-result-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.55rem 0.5rem;
+    border-bottom: 1px solid #dce8ff;
+    font-size: 0.95rem;
+    color: #1a2b4a;
+    font-weight: 500;
+}
+
+.patient-result-item:last-child {
+    border-bottom: none;
+}
+
+.patient-result-item button {
+    margin-left: auto;
+    padding: 0.3rem 0.75rem;
+    background: #1a4d6d;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.88rem;
+    cursor: pointer;
+}
+
+.patient-result-item button:hover {
+    background: #14395a;
 }

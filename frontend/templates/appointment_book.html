@@ -1,0 +1,431 @@
+{% extends "base.html" %}
+
+{% block title %}Book Appointment - OPD Management System{% endblock %}
+{% block page_title %}Book Appointment{% endblock %}
+
+{% block content %}
+<div class="container">
+
+    <section class="toolbar">
+        <button class="btn-link" onclick="window.location.href = document.referrer || '/'">&#8592; Back</button>
+    </section>
+
+    <section>
+        <h2>1. Search Patient</h2>
+        <form id="patientSearchForm" class="form-grid">
+            <label>Name <input type="text" name="name" placeholder="First Last" /></label>
+            <label>Mobile <input type="text" name="phone" placeholder="10-digit mobile" /></label>
+            <label>Patient OPD Number <input type="text" name="opd_number" placeholder="OPDP-000001" /></label>
+            <div><button type="submit">Search</button></div>
+        </form>
+        <div id="patientSearchResult" class="result-box"></div>
+    </section>
+
+    <section>
+        <h2>2. Book Appointment</h2>
+        <form id="appointmentBookForm" class="form-grid">
+            <input type="hidden" name="patient_id" />
+            <label>Patient Name <input type="text" name="patient_name" readonly required
+                    placeholder="Select from search results" /></label>
+            <label>Doctor Name
+                <select name="doctor_id" required>
+                    <option value="">Select doctor</option>
+                </select>
+            </label>
+            <label>Slot Date <input type="date" name="slot_date" required /></label>
+            <label>Token
+                <input type="number" name="token" id="tokenInput" min="1" required readonly
+                    placeholder="Select doctor &amp; date" style="background:#f4f4f4; cursor:not-allowed;" />
+                <small id="capacityInfo" style="color:#555; display:block; margin-top:4px;"></small>
+            </label>
+            <label>Visit Type
+                <select name="visit_type">
+                    <option value="NEW">NEW</option>
+                    <option value="FOLLOW_UP">FOLLOW_UP</option>
+                </select>
+            </label>
+            <label>Channel
+                <select name="channel">
+                    <option value="WALK_IN">WALK_IN</option>
+                    <option value="PHONE">MOBILE</option>
+                </select>
+            </label>
+            <div><button type="submit">Book Appointment</button></div>
+        </form>
+        <pre id="appointmentBookResult" class="result-box"></pre>
+    </section>
+
+    <section id="patientAppointmentsSection" style="display:none; margin-top: 1.5rem;">
+        <h2>3. Existing Appointments</h2>
+        <div id="patientAppointmentsList" class="result-box"></div>
+
+        <form id="appointmentEditForm" class="form-grid" style="display:none; max-width: 640px; margin-top: 1rem;">
+            <input type="hidden" name="appointment_id" />
+            <input type="hidden" name="doctor_id" />
+            <label>New Date <input type="date" name="slot_date" required /></label>
+            <label>Token
+                <input type="number" name="token" min="1" readonly required
+                    style="background:#f4f4f4; cursor:not-allowed;" />
+                <small id="editCapacityInfo" style="color:#555; display:block; margin-top:4px;"></small>
+            </label>
+            <label style="grid-column:1 / -1;">Reason
+                <input type="text" name="reason" value="Patient requested reschedule" required />
+            </label>
+            <div style="display:flex; gap:0.75rem; align-items:center; grid-column:1 / -1;">
+                <button type="submit">Save Changes</button>
+                <button type="button" id="cancelEditBtn">Cancel</button>
+            </div>
+        </form>
+        <pre id="appointmentActionResult" class="result-box"></pre>
+    </section>
+
+    <script>
+        function getCSRFToken() {
+            const match = document.cookie.match(/csrftoken=([^;]+)/);
+            return match ? match[1] : "";
+        }
+
+        function setDefaultSlotDate() {
+            const slotDateInput = document.querySelector('#appointmentBookForm input[name="slot_date"]');
+            if (!slotDateInput) return;
+            if (slotDateInput.value) return;
+            const today = new Date();
+            const yyyy = today.getFullYear();
+            const mm = String(today.getMonth() + 1).padStart(2, "0");
+            const dd = String(today.getDate()).padStart(2, "0");
+            slotDateInput.value = `${yyyy}-${mm}-${dd}`;
+        }
+
+        let selectedPatient = null;
+
+        function setSelectedPatient(patient) {
+            selectedPatient = patient;
+            const form = document.getElementById("appointmentBookForm");
+            form.elements.patient_id.value = patient.id;
+            form.elements.patient_name.value = patient.full_name;
+            loadPatientAppointments(patient.id);
+        }
+
+        function resetAppointmentEditForm() {
+            const form = document.getElementById("appointmentEditForm");
+            form.reset();
+            form.style.display = "none";
+            document.getElementById("editCapacityInfo").textContent = "";
+        }
+
+        async function loadPatientAppointments(patientId) {
+            const section = document.getElementById("patientAppointmentsSection");
+            const container = document.getElementById("patientAppointmentsList");
+            const actionResult = document.getElementById("appointmentActionResult");
+            section.style.display = "block";
+            actionResult.textContent = "";
+            container.textContent = "Loading appointments...";
+
+            const res = await fetch(`/api/patients/${patientId}/opd-history/`, { credentials: "same-origin" });
+            const data = await res.json();
+            const items = (data.opd_history || []).filter((item) => item.status !== "COMPLETED" && item.status !== "CANCELLED");
+
+            if (!items.length) {
+                resetAppointmentEditForm();
+                container.textContent = "No active appointments found for this patient.";
+                return;
+            }
+
+            container.innerHTML = `
+                <table style="width:100%; border-collapse:collapse;">
+                    <thead>
+                        <tr style="background:#dce8ff; font-weight:600;">
+                            <th style="border:1px solid #c6d7fa; padding:8px;">Doctor</th>
+                            <th style="border:1px solid #c6d7fa; padding:8px;">Date</th>
+                            <th style="border:1px solid #c6d7fa; padding:8px;">Time</th>
+                            <th style="border:1px solid #c6d7fa; padding:8px;">Status</th>
+                            <th style="border:1px solid #c6d7fa; padding:8px;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${items.map((item) => `
+                            <tr>
+                                <td style="border:1px solid #c6d7fa; padding:8px;">${item.doctor_name || "-"}</td>
+                                <td style="border:1px solid #c6d7fa; padding:8px;">${item.slot_date}</td>
+                                <td style="border:1px solid #c6d7fa; padding:8px;">${item.start_time || "-"}</td>
+                                <td style="border:1px solid #c6d7fa; padding:8px;">${item.status}</td>
+                                <td style="border:1px solid #c6d7fa; padding:8px; white-space:nowrap;">
+                                    <button type="button" data-action="edit-appointment" data-appointment-id="${item.appointment_id}" data-doctor-id="${item.doctor_id}" data-slot-date="${item.slot_date}">Edit</button>
+                                    <button type="button" data-action="cancel-appointment" data-appointment-id="${item.appointment_id}">Cancel</button>
+                                </td>
+                            </tr>
+                        `).join("")}
+                    </tbody>
+                </table>
+            `;
+        }
+
+        function renderPatientSearchResults(items) {
+            const container = document.getElementById("patientSearchResult");
+            if (!items.length) {
+                container.textContent = "No patients found.";
+                return;
+            }
+
+            container.innerHTML = items.map((patient) => `
+                    <div class="patient-result-item">
+                        <strong>${patient.full_name}</strong> | Mobile: ${patient.phone} | Patient OPD: ${patient.opd_number || "-"}
+                        <button type="button" data-patient-id="${patient.id}">Select</button>
+                    </div>
+                `).join("");
+
+            Array.from(container.querySelectorAll("button[data-patient-id]")).forEach((button, index) => {
+                button.addEventListener("click", () => setSelectedPatient(items[index]));
+            });
+        }
+
+        async function loadDoctors() {
+            const form = document.getElementById("appointmentBookForm");
+            const slotDate = form.elements.slot_date.value;
+            const currentDoctor = form.elements.doctor_id.value;
+            const params = new URLSearchParams();
+
+            if (slotDate) {
+                params.set("slot_date", slotDate);
+            }
+
+            const query = params.toString() ? `?${params.toString()}` : "";
+            const res = await fetch(`/api/doctors/list/${query}`, { credentials: "same-origin" });
+            const data = await res.json();
+            const select = document.querySelector('#appointmentBookForm select[name="doctor_id"]');
+            const items = data.items || [];
+            select.innerHTML = '<option value="">Select doctor</option>' + items.map((doctor) => (
+                `<option value="${doctor.id}">${doctor.name}</option>`
+            )).join("");
+
+            if (currentDoctor && items.some((doctor) => String(doctor.id) === currentDoctor)) {
+                select.value = currentDoctor;
+            } else if (items.length > 0) {
+                // Pick earliest-added doctor as default (lowest id).
+                const firstAddedDoctor = items.reduce((earliest, doctor) => (
+                    Number(doctor.id) < Number(earliest.id) ? doctor : earliest
+                ), items[0]);
+                select.value = String(firstAddedDoctor.id);
+            }
+
+            if (!items.length) {
+                document.getElementById("appointmentBookResult").textContent =
+                    "No available doctors for the selected date. Please choose a different date.";
+            } else {
+                document.getElementById("appointmentBookResult").textContent = "";
+            }
+
+            fetchNextToken();
+        }
+
+        async function doPost(url, formData, targetId) {
+            const body = new URLSearchParams(formData);
+            const res = await fetch(url, {
+                method: "POST",
+                headers: {
+                    "X-CSRFToken": getCSRFToken(),
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                body,
+                credentials: "same-origin",
+            });
+            const text = await res.text();
+            document.getElementById(targetId).textContent = text;
+        }
+
+        document.getElementById("patientSearchForm").addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const params = new URLSearchParams(new FormData(e.target));
+            const res = await fetch(`/api/patients/search/?${params.toString()}`, { credentials: "same-origin" });
+            const data = await res.json();
+            renderPatientSearchResults(data.items || []);
+        });
+
+        document.getElementById("appointmentBookForm").addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const resultEl = document.getElementById("appointmentBookResult");
+            resultEl.className = "result-box";
+            resultEl.textContent = "Booking...";
+
+            const form = e.target;
+            const patientName = form.elements.patient_name.value;
+            const doctorSelect = form.elements.doctor_id;
+            const doctorName = doctorSelect.options[doctorSelect.selectedIndex]?.text || "-";
+            const slotDate = form.elements.slot_date.value;
+            const token = form.elements.token.value;
+
+            const body = new URLSearchParams(new FormData(form));
+            const res = await fetch("/api/appointments/book/", {
+                method: "POST",
+                headers: { "X-CSRFToken": getCSRFToken(), "Content-Type": "application/x-www-form-urlencoded" },
+                body,
+                credentials: "same-origin",
+            });
+            let data = {};
+            try { data = JSON.parse(await res.text()); } catch (_) { }
+            if (res.ok) {
+                resultEl.className = "result-box result-success";
+                resultEl.textContent =
+                    "Appointment booked successfully!\n" +
+                    "Patient: " + patientName + "\n" +
+                    "Doctor: " + doctorName + "\n" +
+                    "Date: " + slotDate + "   Token: " + token + "\n\n" +
+                    "Patient OPD Number: " + (data.patient_opd_number || "-");
+                if (selectedPatient && selectedPatient.id) {
+                    loadPatientAppointments(selectedPatient.id);
+                }
+            } else {
+                resultEl.className = "result-box result-error";
+                const msg = {
+                    doctor_daily_capacity_reached: "This doctor has reached the maximum patient limit for the selected date.",
+                    invalid_slot: "Selected slot is not available. Please choose another date or doctor.",
+                    entity_not_found: "Patient or doctor not found. Please search again.",
+                    validation_failed: "Please fill all required fields correctly.",
+                }[data.error] || (data.error || "Booking failed. Please try again.");
+                resultEl.textContent = msg;
+            }
+        });
+
+        document.querySelector('#appointmentBookForm input[name="slot_date"]').addEventListener("change", () => {
+            loadDoctors();
+        });
+
+        document.querySelector('#appointmentBookForm select[name="doctor_id"]').addEventListener("change", fetchNextToken);
+
+        async function fetchNextTokenForEdit() {
+            const form = document.getElementById("appointmentEditForm");
+            const doctorId = form.elements.doctor_id.value;
+            const slotDate = form.elements.slot_date.value;
+            const tokenInput = form.elements.token;
+            const capacityInfo = document.getElementById("editCapacityInfo");
+
+            if (!doctorId || !slotDate) {
+                tokenInput.value = "";
+                capacityInfo.textContent = "";
+                return;
+            }
+
+            const res = await fetch(`/api/appointments/next-token/?doctor_id=${encodeURIComponent(doctorId)}&slot_date=${encodeURIComponent(slotDate)}`, {
+                credentials: "same-origin"
+            });
+            const data = await res.json();
+            if (!res.ok || data.full) {
+                tokenInput.value = "";
+                capacityInfo.style.color = "#c0392b";
+                capacityInfo.textContent = data.message || `Fully booked (${data.booked_count}/${data.daily_capacity})`;
+                return;
+            }
+
+            tokenInput.value = data.next_token;
+            capacityInfo.style.color = "#155724";
+            capacityInfo.textContent = `${data.booked_count} of ${data.daily_capacity} slots used — Token #${data.next_token} assigned`;
+        }
+
+        document.getElementById("patientAppointmentsList").addEventListener("click", async (e) => {
+            const button = e.target.closest("button[data-action]");
+            if (!button) return;
+
+            const actionResult = document.getElementById("appointmentActionResult");
+            actionResult.className = "result-box";
+            actionResult.textContent = "";
+
+            if (button.dataset.action === "edit-appointment") {
+                const form = document.getElementById("appointmentEditForm");
+                form.style.display = "grid";
+                form.elements.appointment_id.value = button.dataset.appointmentId;
+                form.elements.doctor_id.value = button.dataset.doctorId;
+                form.elements.slot_date.value = button.dataset.slotDate;
+                await fetchNextTokenForEdit();
+                return;
+            }
+
+            if (button.dataset.action === "cancel-appointment") {
+                const confirmed = window.confirm("Cancel this appointment?");
+                if (!confirmed) return;
+
+                const body = new URLSearchParams({ reason: "Cancelled from appointment booking page" });
+                const res = await fetch(`/api/appointments/${button.dataset.appointmentId}/cancel/`, {
+                    method: "POST",
+                    headers: { "X-CSRFToken": getCSRFToken(), "Content-Type": "application/x-www-form-urlencoded" },
+                    body,
+                    credentials: "same-origin",
+                });
+                const data = await res.json();
+                actionResult.className = res.ok ? "result-box result-success" : "result-box result-error";
+                actionResult.textContent = res.ok ? "Appointment cancelled successfully." : (data.error || "Unable to cancel appointment.");
+                if (selectedPatient && selectedPatient.id) {
+                    resetAppointmentEditForm();
+                    loadPatientAppointments(selectedPatient.id);
+                }
+            }
+        });
+
+        document.getElementById("appointmentEditForm").elements.slot_date.addEventListener("change", fetchNextTokenForEdit);
+
+        document.getElementById("cancelEditBtn").addEventListener("click", resetAppointmentEditForm);
+
+        document.getElementById("appointmentEditForm").addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const form = e.target;
+            const appointmentId = form.elements.appointment_id.value;
+            const body = new URLSearchParams(new FormData(form));
+            body.delete("appointment_id");
+            body.delete("doctor_id");
+
+            const actionResult = document.getElementById("appointmentActionResult");
+            const res = await fetch(`/api/appointments/${appointmentId}/reschedule/`, {
+                method: "POST",
+                headers: { "X-CSRFToken": getCSRFToken(), "Content-Type": "application/x-www-form-urlencoded" },
+                body,
+                credentials: "same-origin",
+            });
+            const data = await res.json();
+            actionResult.className = res.ok ? "result-box result-success" : "result-box result-error";
+            actionResult.textContent = res.ok
+                ? "Appointment updated successfully."
+                : ({ invalid_token: "Selected token is not available.", doctor_daily_capacity_reached: "Doctor has reached daily capacity for the selected date." }[data.error] || data.error || "Unable to update appointment.");
+
+            if (res.ok && selectedPatient && selectedPatient.id) {
+                resetAppointmentEditForm();
+                loadPatientAppointments(selectedPatient.id);
+            }
+        });
+
+        async function fetchNextToken() {
+            const form = document.getElementById("appointmentBookForm");
+            const doctorId = form.elements.doctor_id.value;
+            const slotDate = form.elements.slot_date.value;
+            const tokenInput = document.getElementById("tokenInput");
+            const capacityInfo = document.getElementById("capacityInfo");
+
+            if (!doctorId || !slotDate) {
+                tokenInput.value = "";
+                capacityInfo.textContent = "";
+                return;
+            }
+
+            const res = await fetch(
+                `/api/appointments/next-token/?doctor_id=${encodeURIComponent(doctorId)}&slot_date=${encodeURIComponent(slotDate)}`,
+                { credentials: "same-origin" }
+            );
+            const data = await res.json();
+
+            if (!res.ok || data.full) {
+                tokenInput.value = "";
+                capacityInfo.style.color = "#c0392b";
+                capacityInfo.textContent = data.message || `Fully booked (${data.booked_count}/${data.daily_capacity})`;
+                document.querySelector('#appointmentBookForm button[type="submit"]').disabled = true;
+                return;
+            }
+
+            tokenInput.value = data.next_token;
+            capacityInfo.style.color = "#155724";
+            capacityInfo.textContent = `${data.booked_count} of ${data.daily_capacity} slots used — Token #${data.next_token} assigned`;
+            document.querySelector('#appointmentBookForm button[type="submit"]').disabled = false;
+        }
+
+        setDefaultSlotDate();
+        loadDoctors();
+    </script>
+</div>
+{% endblock %}

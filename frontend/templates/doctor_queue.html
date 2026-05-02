@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block title %}Queue - OPD Management System{% endblock %}
+{% block page_title %}Queue Management{% endblock %}
+
+{% block content %}
+<div class="container">
+    <section class="toolbar">
+        <button class="btn-link" onclick="window.location.href = document.referrer || '/'">&#8592; Back</button>
+    </section>
+
+    <section>
+        <h2>View Queue Board</h2>
+        <form id="queueBoardForm" class="form-inline">
+            <label>Doctor ID <input type="number" name="doctor_id" min="1" required /></label>
+            <label>Slot Date <input type="date" name="slot_date" required /></label>
+            <button type="submit">View Queue</button>
+        </form>
+        <pre id="queueBoardResult" class="result-box"></pre>
+    </section>
+
+    <section style="margin-top: 1.5rem;">
+        <h2>Call Next Patient</h2>
+        <form id="queueCallNextForm" class="form-inline">
+            <label>Doctor ID <input type="number" name="doctor_id" min="1" required /></label>
+            <label>Slot Date <input type="date" name="slot_date" required /></label>
+            <button type="submit">Call Next</button>
+        </form>
+        <pre id="queueCallNextResult" class="result-box"></pre>
+    </section>
+</div>
+
+<script>
+    function getCSRFToken() {
+        const match = document.cookie.match(/csrftoken=([^;]+)/);
+        return match ? match[1] : "";
+    }
+
+    document.getElementById("queueBoardForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const params = new URLSearchParams(new FormData(e.target));
+        const res = await fetch(`/api/queue/board/?${params.toString()}`, { credentials: "same-origin" });
+        document.getElementById("queueBoardResult").textContent = await res.text();
+    });
+
+    document.getElementById("queueCallNextForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const body = new URLSearchParams(new FormData(e.target));
+        const res = await fetch(`/api/queue/call-next/`, {
+            method: "POST",
+            headers: { "X-CSRFToken": getCSRFToken(), "Content-Type": "application/x-www-form-urlencoded" },
+            body,
+            credentials: "same-origin",
+        });
+        document.getElementById("queueCallNextResult").textContent = await res.text();
+    });
+</script>
+{% endblock %}

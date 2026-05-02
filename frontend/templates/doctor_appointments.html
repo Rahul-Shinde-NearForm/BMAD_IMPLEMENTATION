@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+
+{% block title %}Today's Appointments - OPD Management System{% endblock %}
+{% block page_title %}Today's Appointments{% endblock %}
+
+{% block content %}
+<div class="container">
+    <section class="toolbar">
+        <button class="btn-link" onclick="window.location.href = document.referrer || '/'">&#8592; Back</button>
+    </section>
+
+    <section>
+        <h2>View Appointments</h2>
+        <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem;">
+            <button type="button" onclick="loadAppointmentsForDate('today')"
+                style="padding:0.5rem 1rem; background:#1a4d6d; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.95rem;">Load
+                Today's Appointments</button>
+            <button type="button" onclick="loadAppointmentsForDate('tomorrow')"
+                style="padding:0.5rem 1rem; background:#1a7d4d; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.95rem;">Load
+                Tomorrow's Appointments</button>
+        </div>
+        <div id="appointmentsList"></div>
+    </section>
+</div>
+
+<script>
+    function getCSRFToken() {
+        const match = document.cookie.match(/csrftoken=([^;]+)/);
+        return match ? match[1] : "";
+    }
+
+    let loadedDoctorId = null;
+    let loadedSlotDate = null;
+    let loadedDateType = "today";
+
+
+    async function loadAppointments(dateType) {
+        loadedDateType = dateType;
+        const listEl = document.getElementById("appointmentsList");
+        listEl.className = "result-box";
+        listEl.textContent = "Loading appointments...";
+
+        try {
+            const res = await fetch("/api/doctors/appointments/today/?date_type=" + dateType, { credentials: "same-origin" });
+            const text = await res.text();
+            let data = {};
+            try {
+                data = JSON.parse(text);
+            } catch (e) {
+                // Response is not JSON - likely an error page or session expired
+                listEl.className = "result-box result-error";
+                listEl.textContent = "Session expired or server error. Please log in again.";
+                return;
+            }
+
+            if (res.ok && data.appointments && data.appointments.length > 0) {
+                loadedDoctorId = data.doctor_id || null;
+                loadedSlotDate = data.date || null;
+                listEl.className = "result-box result-success";
+                let html = "<strong>Doctor: " + (data.doctor_name || "-") + "</strong><br>";
+                html += "<strong>Date: " + (data.date || "-") + "</strong><br><br>";
+                html += "<div style='margin-bottom:0.75rem;'>";
+                html += "<button type='button' onclick='callNextPatient()' style='padding:0.45rem 0.9rem; background:#6b1a4d; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.9rem;'>Call Next Patient in Queue</button>";
+                html += "</div>";
+                html += "<pre id='callNextResult' class='result-box' style='margin-bottom:0.75rem;'></pre>";
+                html += "<table style='width:100%; border-collapse:collapse; font-size:0.95rem; line-height:1.8;'>";
+                html += "<tr style='background:#dce8ff; font-weight:bold;'>";
+                html += "<td style='padding:10px; border:1px solid #c6d7fa;'>#</td>";
+                html += "<td style='padding:10px; border:1px solid #c6d7fa;'>OPD No.</td>";
+                html += "<td style='padding:10px; border:1px solid #c6d7fa;'>Patient Name</td>";
+                html += "<td style='padding:10px; border:1px solid #c6d7fa;'>Mobile</td>";
+                html += "<td style='padding:10px; border:1px solid #c6d7fa;'>Time</td>";
+                html += "<td style='padding:10px; border:1px solid #c6d7fa;'>Status</td>";
+                html += "<td style='padding:10px; border:1px solid #c6d7fa;'>Action</td>";
+                html += "</tr>";
+                data.appointments.forEach((apt, i) => {
+                    const isCompleted = String(apt.status || "").toUpperCase() === "COMPLETED";
+                    html += "<tr>";
+                    html += "<td style='padding:10px; border:1px solid #c6d7fa;'>" + (i + 1) + "</td>";
+                    html += "<td style='padding:10px; border:1px solid #c6d7fa;'>" + (apt.opd_number || "-") + "</td>";
+                    html += "<td style='padding:10px; border:1px solid #c6d7fa;'><strong>" + (apt.patient_name || "-") + "</strong></td>";
+                    html += "<td style='padding:10px; border:1px solid #c6d7fa;'>" + (apt.mobile || "-") + "</td>";
+                    html += "<td style='padding:10px; border:1px solid #c6d7fa;'>" + (apt.start_time || "-") + "</td>";
+                    html += "<td style='padding:10px; border:1px solid #c6d7fa;'><strong>" + (apt.status || "-") + "</strong></td>";
+                    html += "<td style='padding:10px; border:1px solid #c6d7fa;'>";
+                    html += isCompleted
+                        ? "<button type='button' disabled style='padding:0.3rem 0.75rem; background:#94a3b8; color:#fff; border:none; border-radius:6px; cursor:not-allowed; font-size:0.88rem;'>Consult</button>"
+                        : "<button type='button' onclick=\"consultAppointment(" + apt.appointment_id + ")\" style='padding:0.3rem 0.75rem; background:#1a4d6d; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.88rem;'>Consult</button>";
+                    html += "</td>";
+                    html += "</tr>";
+                });
+                html += "</table>";
+                listEl.innerHTML = html;
+            } else if (res.ok) {
+                loadedDoctorId = data.doctor_id || null;
+                loadedSlotDate = data.date || null;
+                listEl.className = "result-box result-success";
+                const dateLabel = dateType === "today" ? "today" : "tomorrow";
+                listEl.innerHTML = "<strong>Date: " + (data.date || "-") + "</strong><br><strong>No appointments scheduled for " + dateLabel + ".</strong>";
+            } else {
+                loadedDoctorId = null;
+                loadedSlotDate = null;
+                listEl.className = "result-box result-error";
+                const errorMsg = data.error ? "Error: " + data.error : "Error loading appointments. Status: " + res.status;
+                listEl.textContent = errorMsg;
+            }
+        } catch (err) {
+            loadedDoctorId = null;
+            loadedSlotDate = null;
+            listEl.className = "result-box result-error";
+            listEl.textContent = "Network error: " + err.message;
+        }
+    }
+
+    function loadAppointmentsForDate(dateType) {
+        loadAppointments(dateType);
+    }
+
+    function consultAppointment(appointmentId) {
+        // Navigate to the consultation page with the appointment ID
+        window.location.href = "/doctor/consultation/?appointment_id=" + appointmentId;
+    }
+
+    async function callNextPatient() {
+        const resultEl = document.getElementById("callNextResult");
+        if (!loadedDoctorId || !loadedSlotDate) {
+            if (resultEl) {
+                resultEl.className = "result-box result-error";
+                resultEl.textContent = "Load appointments first to call next patient.";
+            }
+            return;
+        }
+
+        if (resultEl) {
+            resultEl.className = "result-box";
+            resultEl.textContent = "Calling next patient...";
+        }
+
+        const body = new URLSearchParams({
+            doctor_id: loadedDoctorId,
+            slot_date: loadedSlotDate,
+        });
+
+        const res = await fetch("/api/queue/call-next/", {
+            method: "POST",
+            headers: { "X-CSRFToken": getCSRFToken(), "Content-Type": "application/x-www-form-urlencoded" },
+            body,
+            credentials: "same-origin",
+        });
+        let data = {};
+        try {
+            data = await res.json();
+        } catch (_) {
+            data = {};
+        }
+
+        if (!resultEl) {
+            return;
+        }
+        if (res.ok) {
+            const token = data.event && data.event.token_number ? data.event.token_number : "-";
+            const appointmentId = data.event && data.event.appointment_id ? data.event.appointment_id : "-";
+            resultEl.className = "result-box result-success";
+            resultEl.textContent = `Next patient called successfully. Token: ${token}, Appointment ID: ${appointmentId}`;
+        } else {
+            const msg = data.error === "queue_empty"
+                ? "No waiting patient in queue."
+                : (data.error || "Unable to call next patient.");
+            resultEl.className = "result-box result-error";
+            resultEl.textContent = msg;
+        }
+    }
+
+
+</script>
+{% endblock %}

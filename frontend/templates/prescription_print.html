@@ -62,7 +62,7 @@
         <div>{{ clinic_address }}</div>
         <div class="row">
             <div>Dr. {{ doctor_name }} ({{ doctor_specialty }})</div>
-            <div>Rx No: {{ rx_number }}</div>
+            <div>&nbsp;</div>
         </div>
         <div class="row small">
             <div>{{ doctor_qualification }} | Reg No: {{ doctor_reg_number }}</div>
@@ -110,7 +110,23 @@
                     <td>{{ item.drug }}</td>
                     <td>{{ item.dose }}</td>
                     <td>{{ item.frequency }}</td>
-                    <td>{{ item.timing }}</td>
+                    <td>
+                        {% if item.timing == "after_food" %}
+                        जेवणानंतर
+                        {% elif item.timing == "before_food" %}
+                        जेवणापूर्वी
+                        {% elif item.timing == "with_food" %}
+                        जेवणासोबत
+                        {% elif item.timing == "empty_stomach" %}
+                        रिकाम्या पोटी
+                        {% elif item.timing == "bedtime" %}
+                        झोपण्यापूर्वी
+                        {% elif item.timing == "as_directed" %}
+                        डॉक्टरांच्या सल्ल्यानुसार
+                        {% else %}
+                        {{ item.timing }}
+                        {% endif %}
+                    </td>
                     <td>{{ item.route }}</td>
                     <td>{{ item.duration }}</td>
                     <td>{{ item.instructions }}</td>
@@ -124,13 +140,22 @@
         <strong>Special Instructions:</strong> {{ special_instructions|default:"Nil" }}
     </div>
 
-    <div class="section small">
-        Issued by: {{ issued_by }}
+    <div class="section" style="margin-top: 28px; width: 260px; margin-left: auto; text-align: center;">
+        <div style="height: 40px;"></div>
+        <div style="border-top: 1px solid #222; padding-top: 6px; font-size: 13px;">Dr. {{ doctor_name }}</div>
     </div>
 
     <div class="no-print" style="margin-top: 16px;">
         <button onclick="window.print()">Print</button>
     </div>
+
+    {% if auto_print %}
+    <script>
+        window.addEventListener("load", () => {
+            window.print();
+        });
+    </script>
+    {% endif %}
 </body>
 
 </html>

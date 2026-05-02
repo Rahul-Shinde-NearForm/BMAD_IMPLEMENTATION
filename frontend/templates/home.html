@@ -1,37 +1,36 @@
-<!doctype html>
-<html lang="en">
+{% extends "base.html" %}
 
-<head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>OPD Management System</title>
-    <link rel="stylesheet" href="/static/css/app.css" />
-</head>
+{% block title %}Dashboard - OPD Management System{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
 
-<body>
-    <main class="container">
-        <h1>OPD Management System</h1>
-        <p>Application scaffold is running with QA integration from day 1.</p>
-        <p id="health-hint">Use /health/ for service health check.</p>
-        {% if user.is_authenticated %}
-        <p>You are logged in as <strong>{{ user.username }}</strong>.</p>
-        {% if is_admin %}
-        <p><a href="/users/manage/">Manage Users and Roles</a></p>
-        {% endif %}
-        {% if is_receptionist or is_admin %}
-        <p><a href="/workbench/reception/">Reception Workbench (Patient + Appointment)</a></p>
-        {% endif %}
-        {% if is_doctor or is_admin %}
-        <p><a href="/workbench/doctor/">Doctor Workbench (Consultation + Rx)</a></p>
-        {% endif %}
-        {% if is_pharmacist or is_admin %}
-        <p><a href="/workbench/pharmacy/">Pharmacy Workbench (Prescription Retrieval)</a></p>
-        {% endif %}
-        <p><a href="/logout/">Logout</a></p>
-        {% else %}
-        <p><a href="/login/">Login</a> to access protected workflows.</p>
-        {% endif %}
-    </main>
-</body>
+{% block content %}
+<div class="container">
+    {% if user.is_authenticated %}
+    <h2>Welcome, {{ user.username }}!</h2>
+    <p>Select an option from the left sidebar to get started.</p>
 
-</html>
+    {% if is_pharmacist or is_admin %}
+    <section style="margin-top: 30px;">
+        <h3>Pharmacy Workflows</h3>
+        <div class="toolbar">
+            <a href="/workbench/pharmacy/" class="btn-link">Prescription Queue</a>
+        </div>
+    </section>
+    {% endif %}
+
+    {% if is_admin %}
+    <section style="margin-top: 30px;">
+        <h3>Administration</h3>
+        <div class="toolbar">
+            <a href="/users/manage/" class="btn-link">Manage Users & Roles</a>
+        </div>
+    </section>
+    {% endif %}
+
+    <p id="health-hint" style="margin-top: 30px; color: #666; font-size: 12px;">Tip: Use /health/ for service health
+        check.</p>
+    {% else %}
+    <p><a href="/login/">Login</a> to access protected workflows.</p>
+    {% endif %}
+</div>
+{% endblock %}

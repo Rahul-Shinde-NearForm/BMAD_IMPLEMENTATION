@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+
+{% block title %}User Profile - OPD Management System{% endblock %}
+{% block page_title %}User Profile{% endblock %}
+
+{% block content %}
+<div class="container">
+    <section class="toolbar">
+        <button class="btn-link" onclick="window.location.href = document.referrer || '/'">&#8592; Back</button>
+    </section>
+
+    <section style="max-width: 600px;">
+        <h2>My Profile</h2>
+
+        <div style="background-color: #f9f9f9; padding: 25px; border-radius: 8px; border: 1px solid #ddd;">
+            <!-- Profile Photo Section -->
+            <div style="text-align: center; margin-bottom: 30px;">
+                <div id="profilePhotoPreview"
+                    style="width: 150px; height: 150px; margin: 0 auto 15px; border-radius: 50%; background-color: #1a4d6d; display: flex; align-items: center; justify-content: center; color: white; font-size: 48px; overflow: hidden;">
+                    <img id="photoImg" src="" style="width: 100%; height: 100%; object-fit: cover; display: none;" />
+                    <span id="photoPlaceholder">📷</span>
+                </div>
+                <input type="file" id="photoInput" accept="image/*" style="display: none;" />
+                <button type="button" onclick="document.getElementById('photoInput').click();" class="btn-link"
+                    style="font-size: 14px;">Upload Photo</button>
+            </div>
+
+            <!-- Profile Form -->
+            <form id="profileForm" class="form-grid">
+                <label>First Name
+                    <input type="text" name="first_name" id="firstName" required />
+                </label>
+                <label>Last Name
+                    <input type="text" name="last_name" id="lastName" required />
+                </label>
+                <label>Email
+                    <input type="email" name="email" id="email" required />
+                </label>
+                <label>Phone
+                    <input type="text" name="phone" id="phone" />
+                </label>
+                <label id="regNoField" style="display:none;">Reg No.
+                    <input type="text" name="reg_number" id="regNumber" />
+                </label>
+                <div style="grid-column: 1 / -1;">
+                    <button type="submit" class="btn-link">Update Profile</button>
+                </div>
+            </form>
+
+            <div id="profileMessage" style="margin-top: 20px; padding: 15px; border-radius: 4px; display: none;"></div>
+        </div>
+    </section>
+</div>
+
+<script>
+    // Handle photo upload
+    document.getElementById('photoInput').addEventListener('change', function (e) {
+        const file = e.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = function (event) {
+                const img = document.getElementById('photoImg');
+                const placeholder = document.getElementById('photoPlaceholder');
+                img.src = event.target.result;
+                img.style.display = 'block';
+                placeholder.style.display = 'none';
+                // Store in localStorage for demo
+                localStorage.setItem('userProfilePhoto', event.target.result);
+                // Update sidebar photo
+                updateSidebarPhoto(event.target.result);
+            };
+            reader.readAsDataURL(file);
+        }
+    });
+
+    // Update sidebar photo
+    function updateSidebarPhoto(photoSrc) {
+        const sidebarImg = document.getElementById('sidebarPhotoImg');
+        const sidebarPlaceholder = document.getElementById('sidebarPhotoPlaceholder');
+        if (sidebarImg && sidebarPlaceholder) {
+            sidebarImg.src = photoSrc;
+            sidebarImg.style.display = 'block';
+            sidebarPlaceholder.style.display = 'none';
+        }
+    }
+
+    // Load existing profile photo from localStorage
+    window.addEventListener('load', function () {
+        const savedPhoto = localStorage.getItem('userProfilePhoto');
+        if (savedPhoto) {
+            const img = document.getElementById('photoImg');
+            const placeholder = document.getElementById('photoPlaceholder');
+            img.src = savedPhoto;
+            img.style.display = 'block';
+            placeholder.style.display = 'none';
+        }
+    });
+
+    function getCSRFToken() {
+        const match = document.cookie.match(/csrftoken=([^;]+)/);
+        return match ? match[1] : "";
+    }
+
+    // Load existing profile data
+    async function loadProfile() {
+        try {
+            const res = await fetch('/api/users/profile/', { credentials: 'same-origin' });
+            if (res.ok) {
+                const data = await res.json();
+                document.getElementById('firstName').value = data.first_name || '';
+                document.getElementById('lastName').value = data.last_name || '';
+                document.getElementById('email').value = data.email || '';
+                document.getElementById('phone').value = data.phone || '';
+                document.getElementById('regNumber').value = data.reg_number || '';
+                document.getElementById('regNoField').style.display = (data.roles || []).includes('Doctor') ? 'block' : 'none';
+            }
+        } catch (error) {
+            console.error('Error loading profile:', error);
+        }
+    }
+
+    // Submit profile form
+    document.getElementById('profileForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        const data = {
+            first_name: formData.get('first_name'),
+            last_name: formData.get('last_name'),
+            email: formData.get('email'),
+            phone: formData.get('phone'),
+            reg_number: formData.get('reg_number'),
+        };
+
+        try {
+            const res = await fetch('/api/users/profile/update/', {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': getCSRFToken(),
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data),
+                credentials: 'same-origin',
+            });
+
+            const msgDiv = document.getElementById('profileMessage');
+            if (res.ok) {
+                msgDiv.textContent = '✓ Profile updated successfully!';
+                msgDiv.style.backgroundColor = '#d4edda';
+                msgDiv.style.color = '#155724';
+                msgDiv.style.display = 'block';
+            } else {
+                msgDiv.textContent = '✗ Error updating profile';
+                msgDiv.style.backgroundColor = '#f8d7da';
+                msgDiv.style.color = '#721c24';
+                msgDiv.style.display = 'block';
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            document.getElementById('profileMessage').textContent = '✗ Error updating profile';
+            document.getElementById('profileMessage').style.display = 'block';
+        }
+    });
+
+    // Load profile on page load
+    loadProfile();
+</script>
+{% endblock %}

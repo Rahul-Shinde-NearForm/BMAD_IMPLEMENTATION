@@ -1,0 +1,226 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Patient Details - OPD Management System{% endblock %}
+{% block page_title %}Edit Patient Details{% endblock %}
+
+{% block content %}
+<div class="container">
+    <section class="toolbar">
+        <button class="btn-link" onclick="window.location.href = document.referrer || '/'">&#8592; Back</button>
+    </section>
+
+    <!-- Step 1: Search -->
+    <section id="searchSection">
+        <h2>Search Patient</h2>
+        <div style="background:#f9f9f9; padding:20px; border-radius:8px; border:1px solid #ddd; max-width:600px;">
+            <div class="form-inline" style="flex-wrap:wrap; gap:10px;">
+                <label style="flex:1; min-width:180px;">Name
+                    <input type="text" id="searchName" placeholder="First or last name" style="width:100%;" />
+                </label>
+                <label style="flex:1; min-width:180px;">Mobile Number
+                    <input type="text" id="searchPhone" placeholder="Phone number" style="width:100%;" />
+                </label>
+                <div style="align-self:flex-end;">
+                    <button class="btn-link" onclick="searchPatient()">Search</button>
+                </div>
+            </div>
+            <div id="searchError" style="color:#c0392b; margin-top:10px; display:none;"></div>
+        </div>
+
+        <!-- Search Results -->
+        <div id="searchResults" style="margin-top:20px; max-width:700px; display:none;">
+            <h3>Search Results</h3>
+            <table
+                style="width:100%; border-collapse:collapse; background:#fff; border-radius:8px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.1);">
+                <thead style="background:#1a4d6d; color:white;">
+                    <tr>
+                        <th style="padding:10px 14px; text-align:left;">Name</th>
+                        <th style="padding:10px 14px; text-align:left;">OPD No.</th>
+                        <th style="padding:10px 14px; text-align:left;">Phone</th>
+                        <th style="padding:10px 14px; text-align:left;">Age</th>
+                        <th style="padding:10px 14px; text-align:left;">Weight (kg)</th>
+                        <th style="padding:10px 14px; text-align:left;">Gender</th>
+                        <th style="padding:10px 14px; text-align:left;">Address</th>
+                        <th style="padding:10px 14px; text-align:left;">Action</th>
+                    </tr>
+                </thead>
+                <tbody id="searchResultsBody"></tbody>
+            </table>
+        </div>
+    </section>
+
+    <!-- Step 2: Edit Form (hidden until patient selected) -->
+    <section id="editSection" style="display:none; margin-top:30px;">
+        <h2>Edit Patient Details</h2>
+        <div style="background:#f9f9f9; padding:25px; border-radius:8px; border:1px solid #ddd; max-width:700px;">
+            <div
+                style="background:#e8f4fd; padding:12px 16px; border-radius:6px; margin-bottom:20px; border-left:4px solid #1a4d6d;">
+                <strong id="selectedPatientLabel"></strong>
+            </div>
+            <form id="patientEditForm" class="form-grid">
+                <input type="hidden" id="editPatientId" name="patient_id" />
+                <label>First Name
+                    <input type="text" id="editFirstName" name="first_name" required />
+                </label>
+                <label>Last Name
+                    <input type="text" id="editLastName" name="last_name" required />
+                </label>
+                <label>Age
+                    <input type="number" id="editAge" name="age" min="0" max="130" required />
+                </label>
+                <label>Weight (kg)
+                    <input type="number" id="editWeight" name="weight_kg" min="0" step="0.01" />
+                </label>
+                <label>Gender
+                    <select id="editGender" name="gender" required>
+                        <option value="M">Male</option>
+                        <option value="F">Female</option>
+                        <option value="O">Other</option>
+                    </select>
+                </label>
+                <label>Phone
+                    <input type="text" id="editPhone" name="phone" required pattern="[0-9]{10}" minlength="10"
+                        maxlength="10" inputmode="numeric" />
+                </label>
+                <label>Address
+                    <input type="text" id="editAddress" name="address" />
+                </label>
+                <label style="grid-column:1/-1;">Known History
+                    <textarea id="editKnownHistory" name="known_history" rows="3"
+                        placeholder="e.g. Diabetes, Hypertension, Thyroid, Drug allergies"></textarea>
+                </label>
+                <div style="grid-column:1/-1; display:flex; gap:10px; align-items:center;">
+                    <button type="submit" class="btn-link">Update Patient</button>
+                    <button type="button" class="btn-link" style="background:#6c757d;" onclick="resetToSearch()">Back to
+                        Search</button>
+                </div>
+            </form>
+            <div id="editMessage" style="margin-top:15px; padding:12px 16px; border-radius:6px; display:none;"></div>
+        </div>
+    </section>
+</div>
+
+<script>
+    function getCSRFToken() {
+        const match = document.cookie.match(/csrftoken=([^;]+)/);
+        return match ? match[1] : "";
+    }
+
+    async function searchPatient() {
+        const name = document.getElementById('searchName').value.trim();
+        const phone = document.getElementById('searchPhone').value.trim();
+        const errDiv = document.getElementById('searchError');
+
+        if (!name && !phone) {
+            errDiv.textContent = 'Please enter a name or mobile number to search.';
+            errDiv.style.display = 'block';
+            return;
+        }
+        errDiv.style.display = 'none';
+
+        const params = new URLSearchParams();
+        if (name) params.append('name', name);
+        if (phone) params.append('phone', phone);
+
+        const res = await fetch(`/api/patients/search/?${params.toString()}`, { credentials: 'same-origin' });
+        const data = await res.json();
+        const patients = data.items || [];
+
+        const tbody = document.getElementById('searchResultsBody');
+        const resultsDiv = document.getElementById('searchResults');
+
+        if (patients.length === 0) {
+            errDiv.textContent = 'No patients found. Try a different name or phone number.';
+            errDiv.style.display = 'block';
+            resultsDiv.style.display = 'none';
+            return;
+        }
+
+        tbody.innerHTML = '';
+        patients.forEach(p => {
+            const row = document.createElement('tr');
+            row.style.borderBottom = '1px solid #eee';
+            row.innerHTML = `
+                <td style="padding:10px 14px;">${p.full_name}</td>
+                <td style="padding:10px 14px;">${p.opd_number || '-'}</td>
+                <td style="padding:10px 14px;">${p.phone}</td>
+                <td style="padding:10px 14px;">${p.age || '-'}</td>
+                <td style="padding:10px 14px;">${p.weight_kg || '-'}</td>
+                    <td style="padding:10px 14px;">${p.gender || '-'}</td>
+                    <td style="padding:10px 14px;">${p.address || '-'}</td>
+                <td style="padding:10px 14px;">
+                    <button class="btn-link" style="padding:6px 12px; font-size:13px;"
+                        onclick="loadAndEdit(${p.id}, '${p.full_name}', '${p.opd_number || ''}')">
+                        Edit
+                    </button>
+                </td>`;
+            tbody.appendChild(row);
+        });
+        resultsDiv.style.display = 'block';
+    }
+
+    async function loadAndEdit(patientId, fullName, opdNumber) {
+        const res = await fetch(`/api/patients/${patientId}/detail/`, { credentials: 'same-origin' });
+        if (!res.ok) {
+            alert('Failed to load patient details. Please try again.');
+            return;
+        }
+        const p = await res.json();
+
+        document.getElementById('editPatientId').value = p.id;
+        document.getElementById('editFirstName').value = p.first_name;
+        document.getElementById('editLastName').value = p.last_name;
+        document.getElementById('editAge').value = p.age;
+        document.getElementById('editWeight').value = p.weight_kg || '';
+        document.getElementById('editGender').value = p.gender;
+        document.getElementById('editPhone').value = p.phone;
+        document.getElementById('editAddress').value = p.address_line1 || '';
+        document.getElementById('editKnownHistory').value = p.known_history || '';
+        document.getElementById('selectedPatientLabel').textContent =
+            `Editing: ${p.first_name} ${p.last_name}  |  OPD No: ${p.opd_number}`;
+
+        document.getElementById('searchSection').style.display = 'none';
+        document.getElementById('editSection').style.display = 'block';
+        document.getElementById('editMessage').style.display = 'none';
+    }
+
+    function resetToSearch() {
+        document.getElementById('searchSection').style.display = 'block';
+        document.getElementById('editSection').style.display = 'none';
+    }
+
+    document.getElementById('patientEditForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        const patientId = formData.get('patient_id');
+        const body = new URLSearchParams(formData);
+
+        const res = await fetch(`/api/patients/${patientId}/update/`, {
+            method: 'POST',
+            headers: { 'X-CSRFToken': getCSRFToken(), 'Content-Type': 'application/x-www-form-urlencoded' },
+            body,
+            credentials: 'same-origin',
+        });
+
+        const msgDiv = document.getElementById('editMessage');
+        if (res.ok) {
+            msgDiv.textContent = 'Patient details updated successfully!';
+            msgDiv.style.backgroundColor = '#d4edda';
+            msgDiv.style.color = '#155724';
+        } else {
+            const err = await res.json();
+            msgDiv.textContent = 'Error: ' + (err.error || 'Update failed');
+            msgDiv.style.backgroundColor = '#f8d7da';
+            msgDiv.style.color = '#721c24';
+        }
+        msgDiv.style.display = 'block';
+    });
+
+    // Allow pressing Enter in search fields
+    ['searchName', 'searchPhone'].forEach(id => {
+        document.getElementById(id).addEventListener('keydown', e => {
+            if (e.key === 'Enter') searchPatient();
+        });
+    });
+</script>
+{% endblock %}

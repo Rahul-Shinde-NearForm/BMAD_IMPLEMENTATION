@@ -1,46 +1,125 @@
 from django import forms
 from django.contrib.auth.models import User
+from django.utils import timezone
 
 from .models import Patient
 
 
 class PatientRegistrationForm(forms.ModelForm):
+    age = forms.IntegerField(min_value=0, max_value=130)
+    weight_kg = forms.DecimalField(required=False, min_value=0, max_digits=5, decimal_places=2)
+    known_history = forms.CharField(required=False, widget=forms.Textarea)
+    address = forms.CharField(required=False, max_length=255)
+    dob = forms.DateField(required=False, input_formats=["%Y-%m-%d"])
+    national_id = forms.CharField(required=False, max_length=50)
+
     class Meta:
         model = Patient
         fields = [
             "first_name",
             "last_name",
-            "dob",
+            "age",
+            "weight_kg",
+            "known_history",
             "gender",
             "phone",
-            "national_id",
-            "address_line1",
-            "city",
-            "state",
-            "postal_code",
+            "address",
         ]
+
+    def _dob_from_age(self, age):
+        today = timezone.localdate()
+        try:
+            return today.replace(year=today.year - age)
+        except ValueError:
+            # Handle leap day edge case by falling back to Feb 28.
+            return today.replace(month=2, day=28, year=today.year - age)
+
+    def clean(self):
+        cleaned = super().clean()
+        age = cleaned.get("age")
+        dob = cleaned.get("dob")
+        if age is None and not dob:
+            self.add_error("age", "age is required")
+            return cleaned
+        if not dob and age is not None:
+            cleaned["dob"] = self._dob_from_age(age)
+        return cleaned
+
+    def clean_phone(self):
+        phone = str(self.cleaned_data.get("phone", "")).strip()
+        if not phone.isdigit() or len(phone) != 10:
+            raise forms.ValidationError("Phone number must be exactly 10 digits")
+        return phone
+
+    def save(self, commit=True):
+        patient = super().save(commit=False)
+        patient.dob = self.cleaned_data.get("dob")
+        patient.national_id = self.cleaned_data.get("national_id", "")
+        patient.address_line1 = self.cleaned_data.get("address", "")
+        patient.city = ""
+        patient.state = ""
+        patient.postal_code = ""
+        if commit:
+            patient.save()
+        return patient
 
 
 class PatientUpdateForm(forms.ModelForm):
+    age = forms.IntegerField(min_value=0, max_value=130, required=False)
+    weight_kg = forms.DecimalField(required=False, min_value=0, max_digits=5, decimal_places=2)
+    known_history = forms.CharField(required=False, widget=forms.Textarea)
+    address = forms.CharField(required=False, max_length=255)
+    dob = forms.DateField(required=False, input_formats=["%Y-%m-%d"])
+    national_id = forms.CharField(required=False, max_length=50)
+
     class Meta:
         model = Patient
         fields = [
             "first_name",
             "last_name",
-            "dob",
+            "age",
+            "weight_kg",
+            "known_history",
             "gender",
             "phone",
-            "national_id",
-            "address_line1",
-            "city",
-            "state",
-            "postal_code",
+            "address",
         ]
+
+    def _dob_from_age(self, age):
+        today = timezone.localdate()
+        try:
+            return today.replace(year=today.year - age)
+        except ValueError:
+            return today.replace(month=2, day=28, year=today.year - age)
+
+    def clean_phone(self):
+        phone = str(self.cleaned_data.get("phone", "")).strip()
+        if not phone.isdigit() or len(phone) != 10:
+            raise forms.ValidationError("Phone number must be exactly 10 digits")
+        return phone
+
+    def save(self, commit=True):
+        patient = super().save(commit=False)
+        age = self.cleaned_data.get("age")
+        dob = self.cleaned_data.get("dob")
+        if age is not None:
+            patient.dob = self._dob_from_age(age)
+        elif dob:
+            patient.dob = dob
+        patient.national_id = self.cleaned_data.get("national_id", patient.national_id)
+        patient.address_line1 = self.cleaned_data.get("address", "")
+        patient.city = ""
+        patient.state = ""
+        patient.postal_code = ""
+        if commit:
+            patient.save()
+        return patient
 
 
 class ScheduleUpsertForm(forms.Form):
     doctor_name = forms.CharField(max_length=150)
     specialty = forms.CharField(max_length=100)
+    daily_patient_capacity = forms.IntegerField(min_value=1, required=False)
     day_of_week = forms.IntegerField(min_value=0, max_value=6)
     start_time = forms.TimeField(input_formats=["%H:%M", "%H:%M:%S"])
     end_time = forms.TimeField(input_formats=["%H:%M", "%H:%M:%S"])
@@ -69,26 +148,29 @@ class AppointmentBookForm(forms.Form):
     patient_id = forms.IntegerField(min_value=1)
     doctor_id = forms.IntegerField(min_value=1)
     slot_date = forms.DateField(input_formats=["%Y-%m-%d"])
-    start_time = forms.TimeField(input_formats=["%H:%M", "%H:%M:%S"])
-    end_time = forms.TimeField(input_formats=["%H:%M", "%H:%M:%S"])
+    start_time = forms.TimeField(input_formats=["%H:%M", "%H:%M:%S"], required=False)
+    token = forms.IntegerField(min_value=1, required=False)
     visit_type = forms.ChoiceField(choices=[("NEW", "New"), ("FOLLOW_UP", "Follow Up")])
-    channel = forms.ChoiceField(choices=[("WALK_IN", "Walk-In"), ("ONLINE", "Online"), ("PHONE", "Phone")])
+    channel = forms.ChoiceField(choices=[("WALK_IN", "Walk-In"), ("PHONE", "Mobile")])
 
     def clean(self):
         cleaned = super().clean()
-        if cleaned.get("start_time") and cleaned.get("end_time") and cleaned["start_time"] >= cleaned["end_time"]:
-            self.add_error("end_time", "end_time must be after start_time")
+        if not cleaned.get("start_time") and not cleaned.get("token"):
+            self.add_error("token", "token is required")
         return cleaned
 
 
 class AppointmentRescheduleForm(forms.Form):
     slot_date = forms.DateField(input_formats=["%Y-%m-%d"])
-    start_time = forms.TimeField(input_formats=["%H:%M", "%H:%M:%S"])
-    end_time = forms.TimeField(input_formats=["%H:%M", "%H:%M:%S"])
+    start_time = forms.TimeField(input_formats=["%H:%M", "%H:%M:%S"], required=False)
+    end_time = forms.TimeField(input_formats=["%H:%M", "%H:%M:%S"], required=False)
+    token = forms.IntegerField(min_value=1, required=False)
     reason = forms.CharField(max_length=255)
 
     def clean(self):
         cleaned = super().clean()
+        if not cleaned.get("token") and not (cleaned.get("start_time") and cleaned.get("end_time")):
+            self.add_error("token", "token or slot time is required")
         if cleaned.get("start_time") and cleaned.get("end_time") and cleaned["start_time"] >= cleaned["end_time"]:
             self.add_error("end_time", "end_time must be after start_time")
         return cleaned

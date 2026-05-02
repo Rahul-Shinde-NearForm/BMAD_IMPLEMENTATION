@@ -1,0 +1,282 @@
+{% extends "base.html" %}
+
+{% block title %}Medical Orders - OPD Management System{% endblock %}
+{% block page_title %}Medical Orders{% endblock %}
+
+{% block content %}
+<div class="container">
+    <section class="toolbar">
+        <button class="btn-link" onclick="window.location.href = document.referrer || '/'">&#8592; Back</button>
+    </section>
+
+    <section>
+        <h2>Search Patient</h2>
+        <form id="patientSearchForm" class="form-grid" style="max-width: 560px;">
+            <label>Patient Name <input type="text" name="name" placeholder="e.g. Ravi Patil" /></label>
+            <label>Mobile Number <input type="text" name="phone" placeholder="e.g. 9876543210" /></label>
+            <div><button type="submit">Search Patient</button></div>
+        </form>
+        <div id="patientSearchResult" class="result-box"></div>
+    </section>
+
+    <section style="margin-top: 1.5rem;">
+        <h2>Create Medical Order</h2>
+        <form id="orderForm" class="form-grid" style="max-width: 560px;">
+            <input type="hidden" name="patient_id" />
+            <label>Patient Name <input type="text" name="patient_name" readonly
+                    placeholder="Select patient from search" /></label>
+            <label>Patient OPD Number <input type="text" name="opd_number" readonly
+                    placeholder="Auto populated" /></label>
+            <label>Order Type
+                <select name="order_type">
+                    <option value="LAB">LAB</option>
+                    <option value="RADIOLOGY">RADIOLOGY</option>
+                </select>
+            </label>
+            <label>Description <input type="text" name="description" list="orderDescriptionOptions" required /></label>
+            <datalist id="orderDescriptionOptions"></datalist>
+            <div><button type="submit">Create Order</button></div>
+        </form>
+        <pre id="orderResult" class="result-box"></pre>
+    </section>
+
+    <section id="latestConsultationSection" style="margin-top: 1.5rem; display:none;">
+        <h2>Latest Finalized Consultation</h2>
+        <div id="latestConsultationResult" class="result-box"></div>
+    </section>
+
+    <section id="existingOrdersSection" style="margin-top: 1.5rem; display:none;">
+        <h2>Existing Orders</h2>
+        <div id="existingOrdersResult" class="result-box"></div>
+    </section>
+</div>
+
+<script>
+    function getCSRFToken() {
+        const match = document.cookie.match(/csrftoken=([^;]+)/);
+        return match ? match[1] : "";
+    }
+
+    let selectedPatient = null;
+    const ORDER_DESCRIPTION_OPTIONS = {
+        LAB: [
+            "CBC",
+            "ESR",
+            "CRP",
+            "RBS",
+            "FBS",
+            "PPBS",
+            "HbA1c",
+            "LFT",
+            "RFT",
+            "Serum Electrolytes",
+            "Lipid Profile",
+            "TSH",
+            "T3, T4, TSH",
+            "Urine Routine & Microscopy",
+            "Urine Culture",
+            "Dengue NS1",
+            "Malaria Parasite (MP)",
+            "Widal",
+            "Typhidot IgM",
+            "Stool Routine & Microscopy"
+        ],
+        RADIOLOGY: [
+            "Chest X-ray",
+            "X-ray KUB",
+            "X-ray Cervical Spine",
+            "X-ray Lumbar Spine",
+            "Ultrasound Abdomen",
+            "Ultrasound Pelvis",
+            "Ultrasound KUB",
+            "ECG",
+            "2D Echo",
+            "CT Brain",
+            "CT Chest",
+            "CT Abdomen",
+            "MRI Brain",
+            "MRI Spine",
+            "Mammography"
+        ],
+    };
+
+    function escapeHtml(text) {
+        if (text === null || text === undefined) return "-";
+        return String(text)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/\"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+    function updateOrderDescriptionOptions() {
+        const form = document.getElementById("orderForm");
+        const orderType = form.elements.order_type.value || "LAB";
+        const datalist = document.getElementById("orderDescriptionOptions");
+        const options = ORDER_DESCRIPTION_OPTIONS[orderType] || [];
+
+        datalist.innerHTML = options.map((option) => `<option value="${escapeHtml(option)}"></option>`).join("");
+    }
+
+    function setSelectedPatient(patient) {
+        selectedPatient = patient;
+        const form = document.getElementById("orderForm");
+        form.elements.patient_id.value = patient.id;
+        form.elements.patient_name.value = patient.full_name || "";
+        form.elements.opd_number.value = patient.opd_number || "";
+        const searchResult = document.getElementById("patientSearchResult");
+        searchResult.className = "result-box result-success";
+        searchResult.textContent = `Selected patient: ${patient.full_name} | OPD No: ${patient.opd_number || "-"}`;
+        loadPatientOrderContext(patient.id);
+    }
+
+    async function loadPatientOrderContext(patientId) {
+        const latestSection = document.getElementById("latestConsultationSection");
+        const latestResult = document.getElementById("latestConsultationResult");
+        const ordersSection = document.getElementById("existingOrdersSection");
+        const ordersResult = document.getElementById("existingOrdersResult");
+
+        latestSection.style.display = "block";
+        ordersSection.style.display = "block";
+        latestResult.className = "result-box";
+        latestResult.textContent = "Loading latest consultation...";
+        ordersResult.className = "result-box";
+        ordersResult.textContent = "Loading existing orders...";
+
+        const res = await fetch(`/api/patients/${patientId}/orders/context/`, {
+            credentials: "same-origin",
+        });
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+            latestResult.className = "result-box result-error";
+            latestResult.textContent = data.error || "Unable to load patient order context.";
+            ordersResult.className = "result-box result-error";
+            ordersResult.textContent = data.error || "Unable to load existing orders.";
+            return;
+        }
+
+        const consultation = data.latest_finalized_consultation;
+        if (consultation) {
+            latestResult.className = "result-box result-success";
+            latestResult.innerHTML = `
+                <strong>Doctor:</strong> ${escapeHtml(consultation.doctor_name)}<br>
+                <strong>Consultation Date:</strong> ${escapeHtml(consultation.slot_date)}<br>
+                <strong>Finalized At:</strong> ${escapeHtml(consultation.finalized_at || "-")}<br>
+                <strong>Diagnosis:</strong> ${escapeHtml(consultation.diagnosis || "-")}
+            `;
+        } else {
+            latestResult.className = "result-box result-error";
+            latestResult.textContent = "No finalized consultation found for selected patient.";
+        }
+
+        const orders = data.orders || [];
+        if (!orders.length) {
+            ordersResult.className = "result-box result-success";
+            ordersResult.textContent = "No previous medical orders found for this patient.";
+            return;
+        }
+
+        let html = "<table style='width:100%; border-collapse:collapse; font-size:0.92rem;'>";
+        html += "<thead><tr style='background:#dce8ff; font-weight:600;'>";
+        html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Created At</th>";
+        html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Type</th>";
+        html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Description</th>";
+        html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Doctor</th>";
+        html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Status</th>";
+        html += "</tr></thead><tbody>";
+
+        orders.forEach((order) => {
+            html += "<tr>";
+            html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(order.created_at)}</td>`;
+            html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(order.order_type)}</td>`;
+            html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(order.description)}</td>`;
+            html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(order.doctor_name)}</td>`;
+            html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(order.status)}</td>`;
+            html += "</tr>";
+        });
+
+        html += "</tbody></table>";
+        ordersResult.className = "result-box result-success";
+        ordersResult.innerHTML = html;
+    }
+
+    document.getElementById("patientSearchForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const resultEl = document.getElementById("patientSearchResult");
+        resultEl.className = "result-box";
+        resultEl.textContent = "Searching patients...";
+
+        const params = new URLSearchParams(new FormData(e.target));
+        const res = await fetch(`/api/patients/search/?${params.toString()}`, {
+            credentials: "same-origin",
+        });
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+            resultEl.className = "result-box result-error";
+            resultEl.textContent = data.error || "Unable to search patients.";
+            return;
+        }
+
+        const items = data.items || [];
+        if (!items.length) {
+            resultEl.className = "result-box result-success";
+            resultEl.textContent = "No patients found.";
+            return;
+        }
+
+        resultEl.className = "result-box result-success";
+        resultEl.innerHTML = items.map((patient, index) => `
+            <div class="patient-result-item">
+                <strong>${escapeHtml(patient.full_name)}</strong>
+                <span>Mobile: ${escapeHtml(patient.phone)}</span>
+                <span>OPD: ${escapeHtml(patient.opd_number || "-")}</span>
+                <button type="button" data-patient-index="${index}">Select</button>
+            </div>
+        `).join("");
+
+        Array.from(resultEl.querySelectorAll("button[data-patient-index]")).forEach((button) => {
+            button.addEventListener("click", () => setSelectedPatient(items[Number(button.dataset.patientIndex)]));
+        });
+    });
+
+    document.getElementById("orderForm").elements.order_type.addEventListener("change", updateOrderDescriptionOptions);
+
+    document.getElementById("orderForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const patientId = fd.get("patient_id");
+        const resultEl = document.getElementById("orderResult");
+        if (!patientId) {
+            resultEl.className = "result-box result-error";
+            resultEl.textContent = "Search and select a patient first.";
+            return;
+        }
+
+        fd.delete("patient_id");
+        fd.delete("patient_name");
+        fd.delete("opd_number");
+        const res = await fetch(`/api/patients/${patientId}/orders/`, {
+            method: "POST",
+            headers: { "X-CSRFToken": getCSRFToken(), "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams(fd),
+            credentials: "same-origin",
+        });
+        const data = await res.json().catch(() => ({}));
+        resultEl.className = res.ok ? "result-box result-success" : "result-box result-error";
+        resultEl.textContent = res.ok
+            ? `Medical order created successfully. Patient OPD No: ${data.patient_opd_number || "-"}`
+            : (data.error === "finalized_consultation_not_found"
+                ? "No finalized consultation found for selected patient."
+                : (data.error || "Unable to create medical order."));
+
+        if (res.ok && patientId) {
+            loadPatientOrderContext(patientId);
+        }
+    });
+
+    updateOrderDescriptionOptions();
+</script>
+{% endblock %}

@@ -11,9 +11,12 @@ class Patient(models.Model):
 	first_name = models.CharField(max_length=100)
 	last_name = models.CharField(max_length=100)
 	mrn = models.CharField(max_length=30, unique=True, blank=True, default="")
+	opd_number = models.CharField(max_length=30, unique=True, blank=True, default="")
 	dob = models.DateField()
 	gender = models.CharField(max_length=1, choices=GENDER_CHOICES)
 	phone = models.CharField(max_length=20)
+	weight_kg = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+	known_history = models.TextField(blank=True, default="")
 	national_id = models.CharField(max_length=50, blank=True, default="")
 	address_line1 = models.CharField(max_length=255, blank=True, default="")
 	city = models.CharField(max_length=80, blank=True, default="")
@@ -30,9 +33,15 @@ class Patient(models.Model):
 	def save(self, *args, **kwargs):
 		new_record = self.pk is None
 		super().save(*args, **kwargs)
+		update_fields = []
 		if new_record and not self.mrn:
 			self.mrn = f"MRN-{self.pk:06d}"
-			super().save(update_fields=["mrn"])
+			update_fields.append("mrn")
+		if new_record and not self.opd_number:
+			self.opd_number = f"OPDP-{self.pk:06d}"
+			update_fields.append("opd_number")
+		if update_fields:
+			super().save(update_fields=update_fields)
 
 
 class SearchAuditLog(models.Model):
@@ -47,8 +56,11 @@ class SearchAuditLog(models.Model):
 
 
 class Doctor(models.Model):
+	user = models.OneToOneField("auth.User", on_delete=models.CASCADE, related_name="doctor_profile", blank=True, null=True)
 	full_name = models.CharField(max_length=150)
 	specialty = models.CharField(max_length=100)
+	reg_number = models.CharField(max_length=100, blank=True, default="")
+	daily_patient_capacity = models.PositiveIntegerField(default=50)
 	created_at = models.DateTimeField(auto_now_add=True)
 
 	class Meta:
@@ -71,6 +83,7 @@ class DoctorScheduleTemplate(models.Model):
 
 	doctor = models.ForeignKey(Doctor, on_delete=models.CASCADE, related_name="schedule_templates")
 	day_of_week = models.PositiveSmallIntegerField(choices=DAY_CHOICES)
+	daily_patient_capacity = models.PositiveIntegerField(null=True, blank=True)
 	start_time = models.TimeField()
 	end_time = models.TimeField()
 	break_start = models.TimeField(null=True, blank=True)
@@ -435,3 +448,18 @@ class IncidentRecord(models.Model):
 
 	class Meta:
 		ordering = ["-created_at"]
+
+
+class UserProfile(models.Model):
+	user = models.OneToOneField("auth.User", on_delete=models.CASCADE, related_name="profile")
+	phone = models.CharField(max_length=20, blank=True, default="")
+	bio = models.TextField(blank=True, default="")
+	department = models.CharField(max_length=100, blank=True, default="")
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	class Meta:
+		ordering = ["-created_at"]
+
+	def __str__(self):
+		return f"Profile of {self.user.username}"

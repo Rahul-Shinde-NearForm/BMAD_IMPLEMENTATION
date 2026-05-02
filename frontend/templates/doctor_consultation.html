@@ -1,0 +1,888 @@
+{% extends "base.html" %}
+
+{% block title %}Consultation - OPD Management System{% endblock %}
+{% block page_title %}Consultation{% endblock %}
+
+{% block content %}
+<div class="container">
+    <section class="toolbar">
+        <button class="btn-link" onclick="window.location.href = document.referrer || '/'">&#8592; Back</button>
+    </section>
+
+    <section>
+        <h2>Patient Consultation</h2>
+        <div id="consultationContext" class="result-box" style="margin-bottom: 1rem;">Loading patient details...</div>
+
+        <form id="consultationDraftForm" class="form-grid" style="max-width: 900px;">
+            <input type="hidden" id="appointmentIdInput" name="appointment_id" />
+            <label style="grid-column: 1 / -1;">Known History
+                <textarea id="knownHistoryInput" rows="2" placeholder="Add known history if not captured"></textarea>
+            </label>
+            <label style="grid-column: 1 / -1; margin-top:0.5rem;"><strong>Vitals</strong></label>
+            <label>Temp (C)
+                <input type="number" id="temperatureInput" step="0.1" min="25" max="45" placeholder="e.g. 98.6" />
+            </label>
+            <label>Pulse (bpm)
+                <input type="number" id="pulseInput" min="1" max="300" placeholder="e.g. 72" />
+            </label>
+            <label>BP Systolic
+                <input type="number" id="bpSystolicInput" min="40" max="300" placeholder="e.g. 120" />
+            </label>
+            <label>BP Diastolic
+                <input type="number" id="bpDiastolicInput" min="20" max="200" placeholder="e.g. 80" />
+            </label>
+            <label>SpO2 (%)
+                <input type="number" id="spo2Input" min="50" max="100" placeholder="e.g. 98" />
+            </label>
+            <label>Weight (kg)
+                <input type="number" id="weightInput" step="0.01" min="0" placeholder="e.g. 65" />
+            </label>
+            <label>Height (cm)
+                <input type="number" id="heightInput" step="0.01" min="0" placeholder="e.g. 170" />
+            </label>
+            <label style="grid-column: 1 / -1;">C/O (Chief Complaint)
+                <textarea name="chief_complaint" id="chiefComplaintInput" rows="2"
+                    placeholder="Enter chief complaint"></textarea>
+            </label>
+            <label>Diagnosis <input type="text" name="diagnosis" id="diagnosisInput" /></label>
+            <div style="display:flex; gap:0.75rem; align-items:center;">
+                <button type="submit" id="saveConsultationBtn">Save Consultation</button>
+                <button type="button" id="editConsultationBtn">Edit Consultation</button>
+                <button type="button" id="saveConsultationChangesBtn" style="display:none;">Save Consultation
+                    Changes</button>
+            </div>
+        </form>
+        <pre id="consultationDraftResult" class="result-box"></pre>
+    </section>
+
+    <section id="previousHistoryContainer" style="margin-top: 1.5rem; display:none;">
+        <h2>Previous History</h2>
+        <div id="historySection" class="result-box">No previous history found.</div>
+    </section>
+
+    <section id="lastPrescriptionContainer" style="margin-top: 1.5rem; display:none;">
+        <h2>Last Prescription</h2>
+        <div id="lastPrescriptionSection" class="result-box">No previous prescription found.</div>
+    </section>
+
+    <section style="margin-top: 1.5rem;">
+        <h2>Medicines (Current Visit)</h2>
+        <table id="medicineTable" style="width:100%; border-collapse: collapse; font-size:0.9rem;">
+            <thead>
+                <tr style="background:#dce8ff; font-weight:600;">
+                    <th style="border:1px solid #c6d7fa; padding:8px;">Medicine Name</th>
+                    <th style="border:1px solid #c6d7fa; padding:8px;">Strength</th>
+                    <th style="border:1px solid #c6d7fa; padding:8px;">Frequency</th>
+                    <th style="border:1px solid #c6d7fa; padding:8px;">Duration</th>
+                    <th style="border:1px solid #c6d7fa; padding:8px;">Timing</th>
+                    <th style="border:1px solid #c6d7fa; padding:8px;">Route</th>
+                    <th style="border:1px solid #c6d7fa; padding:8px; width:90px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody id="medicineTableBody"></tbody>
+        </table>
+        <div style="display:flex; gap:0.75rem; margin-top:0.75rem; align-items:center;">
+            <button type="button" id="issuePrescriptionBtn">Issue Prescription</button>
+            <button type="button" id="editPrescriptionBtn">Edit Prescription</button>
+            <button type="button" id="savePrescriptionChangesBtn" style="display:none;">Save Prescription
+                Changes</button>
+            <a id="printPrescriptionBtn" target="_blank"
+                style="display:none; padding:0.45rem 0.8rem; background:#1a4d6d; color:#fff; border-radius:6px; text-decoration:none;">Print
+                Prescription</a>
+        </div>
+        <div style="margin-top:1rem; max-width:900px; display:grid; gap:0.75rem;">
+            <label>Follow-up Date
+                <input type="date" name="follow_up_date" id="followUpDateInput" form="consultationDraftForm" readonly />
+            </label>
+            <small style="color:#555;">Auto-calculated from the maximum duration in current prescribed
+                medicines.</small>
+            <label>Notes
+                <textarea name="notes" id="notesInput" form="consultationDraftForm" rows="3"
+                    placeholder="Additional notes"></textarea>
+            </label>
+            <label>Advise Labs
+                <input type="text" name="advise_labs" id="adviseLabsInput" form="consultationDraftForm"
+                    list="adviseLabsOptions" placeholder="e.g. CBC, Chest X-ray" />
+            </label>
+            <datalist id="adviseLabsOptions">
+                <option value="CBC"></option>
+                <option value="ESR"></option>
+                <option value="CRP"></option>
+                <option value="Urine Routine & Microscopy"></option>
+                <option value="Urine Culture"></option>
+                <option value="RBS"></option>
+                <option value="FBS"></option>
+                <option value="PPBS"></option>
+                <option value="HbA1c"></option>
+                <option value="LFT"></option>
+                <option value="RFT"></option>
+                <option value="Serum Electrolytes"></option>
+                <option value="Lipid Profile"></option>
+                <option value="TSH"></option>
+                <option value="T3, T4, TSH"></option>
+                <option value="Vitamin B12"></option>
+                <option value="Vitamin D"></option>
+                <option value="Serum Uric Acid"></option>
+                <option value="Dengue NS1"></option>
+                <option value="Dengue IgM"></option>
+                <option value="Malaria Parasite (MP)"></option>
+                <option value="Widal"></option>
+                <option value="Typhidot IgM"></option>
+                <option value="Rapid Malaria Antigen"></option>
+                <option value="Peripheral Smear"></option>
+                <option value="Stool Routine & Microscopy"></option>
+                <option value="Sputum for AFB"></option>
+                <option value="Chest X-ray"></option>
+                <option value="ECG"></option>
+            </datalist>
+        </div>
+        <pre id="prescriptionResult" class="result-box"></pre>
+    </section>
+</div>
+
+<script>
+    function getCSRFToken() {
+        const match = document.cookie.match(/csrftoken=([^;]+)/);
+        return match ? match[1] : "";
+    }
+
+    const appointmentId = new URLSearchParams(window.location.search).get("appointment_id");
+    let consultationId = null;
+    let patientId = null;
+    let consultationBaseDate = new Date();
+    let consultationStatus = null;
+    let consultationEditMode = false;
+    let prescriptionExists = false;
+    let prescriptionEditMode = false;
+    let loadedKnownHistory = "";
+    let loadedConsultationValues = {
+        chief_complaint: "",
+        diagnosis: "",
+        follow_up_date: "",
+        notes: "",
+    };
+    let loadedVitalsValues = {
+        temperature_c: "",
+        pulse_bpm: "",
+        bp_systolic: "",
+        bp_diastolic: "",
+        spo2_pct: "",
+        weight_kg: "",
+        height_cm: "",
+    };
+
+    const VITALS_FIELD_MAP = {
+        temperature_c: "temperatureInput",
+        pulse_bpm: "pulseInput",
+        bp_systolic: "bpSystolicInput",
+        bp_diastolic: "bpDiastolicInput",
+        spo2_pct: "spo2Input",
+        weight_kg: "weightInput",
+        height_cm: "heightInput",
+    };
+
+    function escapeHtml(text) {
+        if (text === null || text === undefined) return "-";
+        return String(text)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/\"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+    function medicineRowTemplate() {
+        return `
+            <tr>
+                <td style="border:1px solid #c6d7fa; padding:6px;"><input data-key="drug" type="text" placeholder="Drug name" /></td>
+                <td style="border:1px solid #c6d7fa; padding:6px;"><input data-key="strength" type="text" placeholder="500mg" /></td>
+                <td style="border:1px solid #c6d7fa; padding:6px;">
+                    <select data-key="frequency">
+                        <option>OD</option><option>BD</option><option>TDS</option><option>QID</option><option>SOS</option><option>STAT</option><option>HS</option><option>AC</option><option>PC</option>
+                    </select>
+                </td>
+                <td style="border:1px solid #c6d7fa; padding:6px;">
+                    <select data-key="duration">
+                        <option value="1">1</option>
+                        <option value="3">3</option>
+                        <option value="5" selected>5</option>
+                        <option value="7">7</option>
+                        <option value="10">10</option>
+                        <option value="15">15</option>
+                        <option value="20">20</option>
+                        <option value="25">25</option>
+                        <option value="30">30</option>
+                        <option value="45">45</option>
+                        <option value="60">60</option>
+                    </select>
+                </td>
+                <td style="border:1px solid #c6d7fa; padding:6px;">
+                    <select data-key="timing">
+                        <option value="after_food">after_food</option>
+                        <option value="before_food">before_food</option>
+                        <option value="with_food">with_food</option>
+                        <option value="empty_stomach">empty_stomach</option>
+                        <option value="bedtime">bedtime</option>
+                        <option value="as_directed">as_directed</option>
+                    </select>
+                </td>
+                <td style="border:1px solid #c6d7fa; padding:6px;">
+                    <select data-key="route">
+                        <option value="oral">oral</option>
+                        <option value="topical">topical</option>
+                        <option value="iv">iv</option>
+                        <option value="im">im</option>
+                        <option value="sc">sc</option>
+                        <option value="sublingual">sublingual</option>
+                        <option value="inhalation">inhalation</option>
+                        <option value="nasal">nasal</option>
+                        <option value="rectal">rectal</option>
+                        <option value="ophthalmic">ophthalmic</option>
+                        <option value="otic">otic</option>
+                    </select>
+                </td>
+                <td style="border:1px solid #c6d7fa; padding:6px; text-align:center; white-space:nowrap;">
+                    <button type="button" data-action="add-row" title="Add medicine"
+                        style="padding:2px 8px; margin-right:6px; font-weight:700;">+</button>
+                    <button type="button" data-action="remove-row" title="Remove medicine"
+                        style="padding:2px 8px; font-weight:700;">-</button>
+                </td>
+            </tr>
+        `;
+    }
+
+    function addMedicineRow() {
+        document.getElementById("medicineTableBody").insertAdjacentHTML("beforeend", medicineRowTemplate());
+    }
+
+    function clearMedicineRows() {
+        document.getElementById("medicineTableBody").innerHTML = "";
+    }
+
+    function addMedicineRowWithValues(item = {}) {
+        addMedicineRow();
+        const row = document.querySelector("#medicineTableBody tr:last-child");
+        if (!row) return;
+        row.querySelector('[data-key="drug"]').value = item.drug || "";
+        row.querySelector('[data-key="strength"]').value = item.strength || "";
+        row.querySelector('[data-key="frequency"]').value = item.frequency || "OD";
+        row.querySelector('[data-key="duration"]').value = item.duration || "5";
+        row.querySelector('[data-key="timing"]').value = item.timing || "after_food";
+        row.querySelector('[data-key="route"]').value = item.route || "oral";
+    }
+
+    function getMedicineItems() {
+        const rows = Array.from(document.querySelectorAll("#medicineTableBody tr"));
+        const items = [];
+
+        rows.forEach((row) => {
+            const item = {
+                dosage_form: "Tablet",
+                dose: "1",
+                instructions: "",
+            };
+            row.querySelectorAll("[data-key]").forEach((el) => {
+                item[el.dataset.key] = el.value.trim();
+            });
+            if (item.drug) {
+                items.push(item);
+            }
+        });
+        return items;
+    }
+
+    function parseDurationToDays(durationText) {
+        if (!durationText) return null;
+        const text = String(durationText).trim().toLowerCase();
+        if (!text) return null;
+
+        const numMatch = text.match(/(\d+(?:\.\d+)?)/);
+        if (!numMatch) return null;
+        const value = Number(numMatch[1]);
+        if (!Number.isFinite(value) || value <= 0) return null;
+
+        if (text.includes("month")) return Math.ceil(value * 30);
+        if (text.includes("week") || /\bw\b/.test(text)) return Math.ceil(value * 7);
+        return Math.ceil(value);
+    }
+
+    function updateFollowUpDateFromMedicines() {
+        const items = getMedicineItems();
+        const maxDurationDays = items.reduce((max, item) => {
+            const days = parseDurationToDays(item.duration);
+            return days && days > max ? days : max;
+        }, 0);
+
+        if (!maxDurationDays) {
+            return;
+        }
+
+        const followUpDate = new Date(consultationBaseDate);
+        followUpDate.setDate(followUpDate.getDate() + maxDurationDays);
+        document.getElementById("followUpDateInput").value = followUpDate.toISOString().slice(0, 10);
+    }
+
+    function buildMergedNotesValue() {
+        const notesText = String(document.getElementById("notesInput").value || "").trim();
+        const adviseLabsText = String(document.getElementById("adviseLabsInput").value || "").trim();
+        return adviseLabsText
+            ? (notesText ? `${notesText}\nAdvise Labs: ${adviseLabsText}` : `Advise Labs: ${adviseLabsText}`)
+            : notesText;
+    }
+
+    function syncLoadedConsultationValues() {
+        loadedConsultationValues = {
+            chief_complaint: document.getElementById("chiefComplaintInput").value || "",
+            diagnosis: document.getElementById("diagnosisInput").value || "",
+            follow_up_date: document.getElementById("followUpDateInput").value || "",
+            notes: buildMergedNotesValue(),
+        };
+    }
+
+    function getCurrentVitalsValues() {
+        const current = {};
+        Object.entries(VITALS_FIELD_MAP).forEach(([fieldName, inputId]) => {
+            current[fieldName] = String(document.getElementById(inputId).value || "").trim();
+        });
+        return current;
+    }
+
+    function setVitalsValues(values = {}) {
+        Object.entries(VITALS_FIELD_MAP).forEach(([fieldName, inputId]) => {
+            document.getElementById(inputId).value = values[fieldName] || "";
+        });
+    }
+
+    function syncLoadedPatientValues() {
+        loadedKnownHistory = String(document.getElementById("knownHistoryInput").value || "").trim();
+        loadedVitalsValues = getCurrentVitalsValues();
+    }
+
+    async function saveKnownHistoryAndVitals() {
+        const result = {
+            knownHistoryUpdated: false,
+            vitalsUpdated: false,
+            messages: [],
+            errors: [],
+        };
+
+        const currentKnownHistory = String(document.getElementById("knownHistoryInput").value || "").trim();
+        if (patientId && currentKnownHistory !== loadedKnownHistory) {
+            const knownHistoryBody = new URLSearchParams({ known_history: currentKnownHistory });
+            const knownHistoryRes = await fetch(`/api/patients/${patientId}/known-history/update/`, {
+                method: "POST",
+                headers: { "X-CSRFToken": getCSRFToken(), "Content-Type": "application/x-www-form-urlencoded" },
+                body: knownHistoryBody,
+                credentials: "same-origin",
+            });
+            if (knownHistoryRes.ok) {
+                result.knownHistoryUpdated = true;
+                result.messages.push("Known history saved.");
+                loadedKnownHistory = currentKnownHistory;
+            } else {
+                const data = await knownHistoryRes.json().catch(() => ({}));
+                result.errors.push(data.error || "Unable to save known history.");
+            }
+        }
+
+        const currentVitalsValues = getCurrentVitalsValues();
+        const vitalsChanged = Object.keys(VITALS_FIELD_MAP).some((fieldName) => {
+            return String(currentVitalsValues[fieldName] || "") !== String(loadedVitalsValues[fieldName] || "");
+        });
+
+        if (vitalsChanged) {
+            if (!consultationId) {
+                result.errors.push("Save consultation first before saving vitals.");
+            } else {
+                const vitalsBody = new URLSearchParams(currentVitalsValues);
+                const vitalsRes = await fetch(`/api/consultations/${consultationId}/vitals/`, {
+                    method: "POST",
+                    headers: { "X-CSRFToken": getCSRFToken(), "Content-Type": "application/x-www-form-urlencoded" },
+                    body: vitalsBody,
+                    credentials: "same-origin",
+                });
+                if (vitalsRes.ok) {
+                    result.vitalsUpdated = true;
+                    result.messages.push("Vitals saved.");
+                    loadedVitalsValues = currentVitalsValues;
+                } else {
+                    const data = await vitalsRes.json().catch(() => ({}));
+                    result.errors.push(data.error || "Unable to save vitals.");
+                }
+            }
+        }
+
+        return result;
+    }
+
+    function updateConsultationButtons() {
+        const saveConsultationBtn = document.getElementById("saveConsultationBtn");
+        const editConsultationBtn = document.getElementById("editConsultationBtn");
+        const saveConsultationChangesBtn = document.getElementById("saveConsultationChangesBtn");
+
+        const canEditFinalized = consultationId && consultationStatus === "FINALIZED";
+        saveConsultationBtn.style.display = canEditFinalized ? "none" : "inline-block";
+        editConsultationBtn.disabled = !canEditFinalized;
+        editConsultationBtn.style.display = canEditFinalized && !consultationEditMode ? "inline-block" : "none";
+        saveConsultationChangesBtn.style.display = canEditFinalized && consultationEditMode ? "inline-block" : "none";
+
+        const issueBtn = document.getElementById("issuePrescriptionBtn");
+        const editBtn = document.getElementById("editPrescriptionBtn");
+        const saveBtn = document.getElementById("savePrescriptionChangesBtn");
+
+        editBtn.disabled = !(consultationId && prescriptionExists);
+        issueBtn.disabled = !consultationId || prescriptionExists;
+        issueBtn.style.display = prescriptionExists ? "none" : "inline-block";
+        editBtn.style.display = prescriptionExists && !prescriptionEditMode ? "inline-block" : "none";
+        saveBtn.style.display = prescriptionExists && prescriptionEditMode ? "inline-block" : "none";
+    }
+
+    async function loadExistingPrescription() {
+        if (!consultationId) {
+            prescriptionExists = false;
+            const printBtn = document.getElementById("printPrescriptionBtn");
+            printBtn.style.display = "none";
+            updateConsultationButtons();
+            return;
+        }
+
+        const res = await fetch(`/api/consultations/${consultationId}/prescription/get/`, { credentials: "same-origin" });
+        if (!res.ok) {
+            prescriptionExists = false;
+            const printBtn = document.getElementById("printPrescriptionBtn");
+            printBtn.style.display = "none";
+            updateConsultationButtons();
+            return;
+        }
+
+        const data = await res.json();
+        prescriptionExists = true;
+        prescriptionEditMode = false;
+        clearMedicineRows();
+        (data.items || []).forEach((item) => addMedicineRowWithValues(item));
+        if (!(data.items || []).length) {
+            addMedicineRow();
+        }
+        const printBtn = document.getElementById("printPrescriptionBtn");
+        printBtn.href = `/consultations/${consultationId}/prescription/print/?t=${Date.now()}`;
+        printBtn.style.display = "inline-block";
+        updateFollowUpDateFromMedicines();
+        updateConsultationButtons();
+    }
+
+    function renderHistory(history) {
+        const el = document.getElementById("historySection");
+        const container = document.getElementById("previousHistoryContainer");
+        if (!history || history.length === 0) {
+            container.style.display = "none";
+            el.innerHTML = "";
+            return;
+        }
+        container.style.display = "block";
+
+        let html = "<table style='width:100%; border-collapse: collapse;'>";
+        html += "<tr style='background:#dce8ff; font-weight:600;'>";
+        html += "<td style='border:1px solid #c6d7fa; padding:8px;'>Date</td>";
+        html += "<td style='border:1px solid #c6d7fa; padding:8px;'>Doctor</td>";
+        html += "<td style='border:1px solid #c6d7fa; padding:8px;'>C/O</td>";
+        html += "<td style='border:1px solid #c6d7fa; padding:8px;'>Diagnosis</td>";
+        html += "<td style='border:1px solid #c6d7fa; padding:8px;'>Weight</td>";
+        html += "</tr>";
+
+        history.forEach((item) => {
+            html += "<tr>";
+            html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.slot_date)}</td>`;
+            html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.doctor_name)}</td>`;
+            html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.chief_complaint)}</td>`;
+            html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.diagnosis)}</td>`;
+            html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.weight_kg)}</td>`;
+            html += "</tr>";
+        });
+
+        html += "</table>";
+        el.innerHTML = html;
+    }
+
+    function renderLastPrescription(data) {
+        const el = document.getElementById("lastPrescriptionSection");
+        const container = document.getElementById("lastPrescriptionContainer");
+        if (!data) {
+            container.style.display = "none";
+            el.innerHTML = "";
+            return;
+        }
+        container.style.display = "block";
+
+        let html = `<strong>Last Rx:</strong> ${escapeHtml(data.rx_number)} | <strong>Date:</strong> ${escapeHtml(data.issued_at)} | <strong>Doctor:</strong> ${escapeHtml(data.doctor_name)}<br><br>`;
+        html += "<table style='width:100%; border-collapse: collapse;'>";
+        html += "<tr style='background:#dce8ff; font-weight:600;'>";
+        html += "<td style='border:1px solid #c6d7fa; padding:8px;'>Drug</td>";
+        html += "<td style='border:1px solid #c6d7fa; padding:8px;'>Dose</td>";
+        html += "<td style='border:1px solid #c6d7fa; padding:8px;'>Frequency</td>";
+        html += "<td style='border:1px solid #c6d7fa; padding:8px;'>Duration</td>";
+        html += "</tr>";
+
+        (data.items || []).forEach((item) => {
+            html += "<tr>";
+            html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.drug)}</td>`;
+            html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.dose)}</td>`;
+            html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.frequency)}</td>`;
+            html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.duration)}</td>`;
+            html += "</tr>";
+        });
+
+        html += "</table>";
+        el.innerHTML = html;
+    }
+
+    async function loadConsultationContext() {
+        const contextEl = document.getElementById("consultationContext");
+        if (!appointmentId) {
+            contextEl.className = "result-box result-error";
+            contextEl.textContent = "Missing appointment_id in URL. Please open this page from View Appointments -> Consult.";
+            return;
+        }
+
+        document.getElementById("appointmentIdInput").value = appointmentId;
+        const res = await fetch(`/api/consultations/appointment/${appointmentId}/context/`, { credentials: "same-origin" });
+        const text = await res.text();
+        let data = {};
+        try {
+            data = JSON.parse(text);
+        } catch (_) {
+            contextEl.className = "result-box result-error";
+            contextEl.textContent = "Unexpected server response.";
+            return;
+        }
+
+        if (!res.ok) {
+            contextEl.className = "result-box result-error";
+            contextEl.textContent = data.error || "Unable to load consultation context.";
+            return;
+        }
+
+        contextEl.className = "result-box result-success";
+        contextEl.innerHTML = `<strong>Patient:</strong> ${escapeHtml(data.patient.full_name)} | <strong>OPD No:</strong> ${escapeHtml(data.patient.opd_number)} | <strong>Age:</strong> ${escapeHtml(data.patient.age)} | <strong>Weight:</strong> ${escapeHtml(data.patient.weight_kg)} kg`;
+        patientId = data.patient && data.patient.patient_id ? data.patient.patient_id : null;
+        consultationBaseDate = data.appointment && data.appointment.slot_date
+            ? new Date(`${data.appointment.slot_date}T00:00:00`)
+            : new Date();
+        const knownHistory = data.patient.known_history || "";
+        document.getElementById("knownHistoryInput").value = knownHistory;
+        if (!document.getElementById("chiefComplaintInput").value.trim() && knownHistory.trim()) {
+            document.getElementById("chiefComplaintInput").value = knownHistory;
+        }
+        setVitalsValues(data.vitals || {});
+
+        renderHistory(data.previous_history);
+        renderLastPrescription(data.last_prescription);
+
+        if (data.current_consultation) {
+            consultationId = data.current_consultation.consultation_id;
+            consultationStatus = data.current_consultation.status;
+            consultationEditMode = false;
+            document.getElementById("chiefComplaintInput").value = data.current_consultation.chief_complaint || "";
+            document.getElementById("diagnosisInput").value = data.current_consultation.diagnosis || "";
+            document.getElementById("followUpDateInput").value = data.current_consultation.follow_up_date || "";
+
+            const storedNotes = data.current_consultation.notes || "";
+            const marker = "Advise Labs:";
+            const notesInput = document.getElementById("notesInput");
+            const adviseLabsInput = document.getElementById("adviseLabsInput");
+            const markerIndex = storedNotes.indexOf(marker);
+            if (markerIndex >= 0) {
+                notesInput.value = storedNotes.slice(0, markerIndex).trim();
+                adviseLabsInput.value = storedNotes.slice(markerIndex + marker.length).trim();
+            } else {
+                notesInput.value = storedNotes;
+                adviseLabsInput.value = "";
+            }
+            syncLoadedConsultationValues();
+            syncLoadedPatientValues();
+        } else {
+            consultationId = null;
+            consultationStatus = null;
+            consultationEditMode = false;
+            syncLoadedConsultationValues();
+            syncLoadedPatientValues();
+        }
+
+        updateFollowUpDateFromMedicines();
+        updateConsultationButtons();
+        await loadExistingPrescription();
+
+        if (data.current_consultation && data.current_consultation.consultation_id) {
+            const printBtn = document.getElementById("printPrescriptionBtn");
+            printBtn.href = `/consultations/${data.current_consultation.consultation_id}/prescription/print/`;
+        }
+    }
+
+    document.getElementById("consultationDraftForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const mergedNotes = buildMergedNotesValue();
+        fd.set("notes", mergedNotes);
+        fd.delete("advise_labs");
+
+        const appointmentIdValue = fd.get("appointment_id");
+        fd.delete("appointment_id");
+        const body = new URLSearchParams(fd);
+        const res = await fetch(`/api/consultations/appointment/${appointmentIdValue}/draft/`, {
+            method: "POST",
+            headers: { "X-CSRFToken": getCSRFToken(), "Content-Type": "application/x-www-form-urlencoded" },
+            body,
+            credentials: "same-origin",
+        });
+        const text = await res.text();
+        let data = {};
+        try {
+            data = JSON.parse(text);
+        } catch (_) {
+            data = { error: text };
+        }
+
+        if (res.ok) {
+            consultationId = data.consultation_id;
+            const finalizeRes = await fetch(`/api/consultations/${consultationId}/finalize/`, {
+                method: "POST",
+                headers: { "X-CSRFToken": getCSRFToken(), "Content-Type": "application/x-www-form-urlencoded" },
+                credentials: "same-origin",
+            });
+            if (finalizeRes.ok) {
+                consultationStatus = "FINALIZED";
+                consultationEditMode = false;
+            }
+            const sideSaveResult = await saveKnownHistoryAndVitals();
+            syncLoadedConsultationValues();
+            syncLoadedPatientValues();
+            updateConsultationButtons();
+            document.getElementById("consultationDraftResult").className = finalizeRes.ok && !sideSaveResult.errors.length
+                ? "result-box result-success"
+                : "result-box result-error";
+            const baseMessage = finalizeRes.ok
+                ? `Consultation saved successfully. Consultation ID: ${consultationId}`
+                : `Consultation saved but finalize failed. Consultation ID: ${consultationId}`;
+            const sideSuccess = sideSaveResult.messages.length ? ` ${sideSaveResult.messages.join(" ")}` : "";
+            const sideErrors = sideSaveResult.errors.length ? ` ${sideSaveResult.errors.join(" ")}` : "";
+            document.getElementById("consultationDraftResult").textContent = `${baseMessage}${sideSuccess}${sideErrors}`.trim();
+        } else {
+            document.getElementById("consultationDraftResult").className = "result-box result-error";
+            document.getElementById("consultationDraftResult").textContent = data.error || "Failed to save consultation.";
+        }
+    });
+
+    document.getElementById("editConsultationBtn").addEventListener("click", async () => {
+        const resultEl = document.getElementById("consultationDraftResult");
+        if (!consultationId || consultationStatus !== "FINALIZED") {
+            resultEl.className = "result-box result-error";
+            resultEl.textContent = "Save consultation first before editing it.";
+            return;
+        }
+
+        consultationEditMode = true;
+        updateConsultationButtons();
+        resultEl.className = "result-box result-success";
+        resultEl.textContent = "Edit mode enabled. Update fields and click Save Consultation Changes.";
+    });
+
+    document.getElementById("saveConsultationChangesBtn").addEventListener("click", async () => {
+        const resultEl = document.getElementById("consultationDraftResult");
+        if (!consultationId || consultationStatus !== "FINALIZED") {
+            resultEl.className = "result-box result-error";
+            resultEl.textContent = "Save consultation first before editing it.";
+            return;
+        }
+
+        const currentValues = {
+            chief_complaint: document.getElementById("chiefComplaintInput").value || "",
+            diagnosis: document.getElementById("diagnosisInput").value || "",
+            follow_up_date: document.getElementById("followUpDateInput").value || "",
+            notes: buildMergedNotesValue(),
+        };
+
+        const changedEntries = Object.entries(currentValues).filter(([fieldName, value]) => {
+            return String(value || "") !== String(loadedConsultationValues[fieldName] || "");
+        });
+
+        if (changedEntries.length) {
+            for (const [fieldName, newValue] of changedEntries) {
+                const body = new URLSearchParams({
+                    field_name: fieldName,
+                    new_value: newValue,
+                    reason: "doctor_updated_consultation",
+                });
+                const res = await fetch(`/api/consultations/${consultationId}/amend/`, {
+                    method: "POST",
+                    headers: { "X-CSRFToken": getCSRFToken(), "Content-Type": "application/x-www-form-urlencoded" },
+                    body,
+                    credentials: "same-origin",
+                });
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    resultEl.className = "result-box result-error";
+                    resultEl.textContent = data.error || `Unable to update ${fieldName}.`;
+                    return;
+                }
+            }
+        }
+
+        const sideSaveResult = await saveKnownHistoryAndVitals();
+
+        syncLoadedConsultationValues();
+        syncLoadedPatientValues();
+        consultationEditMode = changedEntries.length > 0 || sideSaveResult.knownHistoryUpdated || sideSaveResult.vitalsUpdated
+            ? false
+            : consultationEditMode;
+        updateConsultationButtons();
+        const nothingChanged = !changedEntries.length && !sideSaveResult.knownHistoryUpdated && !sideSaveResult.vitalsUpdated;
+        if (sideSaveResult.errors.length) {
+            resultEl.className = "result-box result-error";
+            resultEl.textContent = sideSaveResult.errors.join(" ");
+            return;
+        }
+        resultEl.className = "result-box result-success";
+        resultEl.textContent = nothingChanged
+            ? "No consultation, known history, or vitals changes to update."
+            : "Consultation details updated successfully.";
+    });
+
+    document.getElementById("medicineTableBody").addEventListener("click", (e) => {
+        const action = e.target && e.target.dataset ? e.target.dataset.action : "";
+        if (!action) return;
+
+        if (action === "add-row") {
+            addMedicineRow();
+            updateFollowUpDateFromMedicines();
+            return;
+        }
+
+        if (action === "remove-row") {
+            const rows = document.querySelectorAll("#medicineTableBody tr");
+            if (rows.length <= 1) {
+                return;
+            }
+            const row = e.target.closest("tr");
+            if (row) {
+                row.remove();
+                updateFollowUpDateFromMedicines();
+            }
+        }
+    });
+    document.getElementById("medicineTableBody").addEventListener("input", updateFollowUpDateFromMedicines);
+    document.getElementById("medicineTableBody").addEventListener("change", updateFollowUpDateFromMedicines);
+
+    document.getElementById("issuePrescriptionBtn").addEventListener("click", async () => {
+        const resultEl = document.getElementById("prescriptionResult");
+
+        if (!consultationId) {
+            resultEl.className = "result-box result-error";
+            resultEl.textContent = "Save and finalize consultation first.";
+            return;
+        }
+
+        const items = getMedicineItems();
+        if (items.length === 0) {
+            resultEl.className = "result-box result-error";
+            resultEl.textContent = "Please add at least one medicine row.";
+            return;
+        }
+
+        const payload = {
+            items,
+            doctor_qualification: "",
+            doctor_reg_number: "",
+            clinic_name: "",
+            clinic_address: "",
+            special_instructions: "",
+        };
+
+        const res = await fetch(`/api/consultations/${consultationId}/prescription/`, {
+            method: "POST",
+            headers: { "X-CSRFToken": getCSRFToken(), "Content-Type": "application/json" },
+            credentials: "same-origin",
+            body: JSON.stringify(payload),
+        });
+
+        const text = await res.text();
+        let data = {};
+        try {
+            data = JSON.parse(text);
+        } catch (_) {
+            data = { error: text };
+        }
+
+        if (res.ok) {
+            resultEl.className = "result-box result-success";
+            resultEl.textContent = `Prescription issued successfully. Rx: ${data.rx_number}`;
+            prescriptionExists = true;
+            await loadExistingPrescription();
+        } else {
+            resultEl.className = "result-box result-error";
+            resultEl.textContent = data.error || "Unable to issue prescription.";
+        }
+    });
+
+    document.getElementById("editPrescriptionBtn").addEventListener("click", async () => {
+        const resultEl = document.getElementById("prescriptionResult");
+        if (!consultationId || !prescriptionExists) {
+            resultEl.className = "result-box result-error";
+            resultEl.textContent = "Issue prescription first before editing it.";
+            return;
+        }
+
+        prescriptionEditMode = true;
+        updateConsultationButtons();
+        resultEl.className = "result-box result-success";
+        resultEl.textContent = "Edit mode enabled. Modify medicines and click Save Prescription Changes.";
+    });
+
+    document.getElementById("savePrescriptionChangesBtn").addEventListener("click", async () => {
+        const resultEl = document.getElementById("prescriptionResult");
+        if (!consultationId || !prescriptionExists) {
+            resultEl.className = "result-box result-error";
+            resultEl.textContent = "Issue prescription first before editing it.";
+            return;
+        }
+
+        const items = getMedicineItems();
+        if (items.length === 0) {
+            resultEl.className = "result-box result-error";
+            resultEl.textContent = "Please add at least one medicine row.";
+            return;
+        }
+
+        const payload = {
+            items,
+        };
+
+        const res = await fetch(`/api/consultations/${consultationId}/prescription/update/`, {
+            method: "POST",
+            headers: { "X-CSRFToken": getCSRFToken(), "Content-Type": "application/json" },
+            credentials: "same-origin",
+            body: JSON.stringify(payload),
+        });
+
+        const text = await res.text();
+        let data = {};
+        try {
+            data = JSON.parse(text);
+        } catch (_) {
+            data = { error: text };
+        }
+
+        if (res.ok) {
+            resultEl.className = "result-box result-success";
+            resultEl.textContent = `Prescription updated successfully. Rx: ${data.rx_number}`;
+            prescriptionEditMode = false;
+            await loadExistingPrescription();
+        } else {
+            resultEl.className = "result-box result-error";
+            resultEl.textContent = data.error || "Unable to update prescription.";
+        }
+    });
+
+    addMedicineRow();
+    updateFollowUpDateFromMedicines();
+    loadConsultationContext();
+</script>
+{% endblock %}

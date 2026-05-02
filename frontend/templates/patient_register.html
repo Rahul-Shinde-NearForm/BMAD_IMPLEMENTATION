@@ -1,22 +1,276 @@
-<!doctype html>
-<html lang="en">
+{% extends "base.html" %}
 
-<head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Patient Registration</title>
-    <link rel="stylesheet" href="/static/css/app.css" />
-</head>
+{% block title %}Patient Registration - OPD Management System{% endblock %}
+{% block page_title %}Patient Registration{% endblock %}
 
-<body>
-    <main class="container">
-        <h1>Patient Registration</h1>
-        <form method="post" action="/api/patients/register/">
-            {% csrf_token %}
-            {{ form.as_p }}
-            <button type="submit">Register</button>
-        </form>
-    </main>
-</body>
+{% block content %}
+<div class="container">
+    <style>
+        .registration-layout {
+            display: grid;
+            grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
+            gap: 1.5rem;
+            align-items: start;
+        }
 
-</html>
+        .registration-panel {
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            padding: 1rem;
+            background: #fff;
+        }
+
+        .registration-panel h2 {
+            margin-top: 0;
+        }
+
+        .appointment-submit {
+            margin-top: 1rem;
+        }
+
+        @media (max-width: 900px) {
+            .registration-layout {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+
+    <section class="toolbar">
+        <button class="btn-link" onclick="window.location.href = document.referrer || '/'">&#8592; Back</button>
+    </section>
+
+    <h1>Patient Registration</h1>
+    <div id="patientRegisterMessage" class="result-box" style="display:none;"></div>
+    <form id="patientRegisterForm" method="post" action="/api/patients/register/">
+        {% csrf_token %}
+        <div class="registration-layout">
+            <section class="registration-panel">
+                <h2>Patient Details</h2>
+                <p><label>First Name <input type="text" name="first_name" required /></label></p>
+                <p><label>Last Name <input type="text" name="last_name" required /></label></p>
+                <p><label>Age <input type="number" name="age" min="0" max="130" required /></label></p>
+                <p><label>Weight (kg) <input type="number" name="weight_kg" min="0" step="0.01" /></label></p>
+                <p>
+                    <label>Gender
+                        <select name="gender" required>
+                            <option value="M">Male</option>
+                            <option value="F">Female</option>
+                            <option value="O">Other</option>
+                        </select>
+                    </label>
+                </p>
+                <p><label>Phone <input type="text" name="phone" required pattern="[0-9]{10}" minlength="10"
+                            maxlength="10" inputmode="numeric" /></label></p>
+                <p><label>Known History <textarea name="known_history" rows="3"
+                            placeholder="e.g. Diabetes, Hypertension, Thyroid, Drug allergies"></textarea></label></p>
+                <p><label>Address <input type="text" name="address" /></label></p>
+            </section>
+
+            <section class="registration-panel">
+                <h2>Appointment Details</h2>
+                <div class="form-grid">
+                    <label>Doctor Name
+                        <select name="doctor_id" required>
+                            <option value="">Select doctor</option>
+                        </select>
+                    </label>
+                    <label>Slot Date <input type="date" name="slot_date" required /></label>
+                    <label>Token
+                        <input type="number" name="token" id="tokenInput" min="1" required readonly
+                            placeholder="Select doctor &amp; date" style="background:#f4f4f4; cursor:not-allowed;" />
+                        <small id="capacityInfo" style="color:#555; display:block; margin-top:4px;"></small>
+                    </label>
+                    <label>Visit Type
+                        <select name="visit_type">
+                            <option value="NEW">NEW</option>
+                            <option value="FOLLOW_UP">FOLLOW_UP</option>
+                        </select>
+                    </label>
+                    <label>Channel
+                        <select name="channel">
+                            <option value="WALK_IN">WALK_IN</option>
+                            <option value="PHONE">MOBILE</option>
+                        </select>
+                    </label>
+                </div>
+                <button type="submit" class="appointment-submit">Register and Book Appointment</button>
+            </section>
+        </div>
+    </form>
+
+    <script>
+        function getCSRFToken() {
+            const match = document.cookie.match(/csrftoken=([^;]+)/);
+            return match ? match[1] : "";
+        }
+
+        function setDefaultSlotDate() {
+            const slotDateInput = document.querySelector('#patientRegisterForm input[name="slot_date"]');
+            if (!slotDateInput) return;
+            const today = new Date();
+            const yyyy = today.getFullYear();
+            const mm = String(today.getMonth() + 1).padStart(2, "0");
+            const dd = String(today.getDate()).padStart(2, "0");
+            slotDateInput.value = `${yyyy}-${mm}-${dd}`;
+        }
+
+        async function loadDoctors() {
+            const form = document.getElementById("patientRegisterForm");
+            const slotDate = form.elements.slot_date.value;
+            const currentDoctor = form.elements.doctor_id.value;
+            const params = new URLSearchParams();
+
+            if (slotDate) {
+                params.set("slot_date", slotDate);
+            }
+
+            const query = params.toString() ? `?${params.toString()}` : "";
+            const res = await fetch(`/api/doctors/list/${query}`, { credentials: "same-origin" });
+            const data = await res.json().catch(() => ({ items: [] }));
+            const select = form.elements.doctor_id;
+            const items = data.items || [];
+            select.innerHTML = '<option value="">Select doctor</option>' + items.map((doctor) => (
+                `<option value="${doctor.id}">${doctor.name}</option>`
+            )).join("");
+
+            if (currentDoctor && items.some((doctor) => String(doctor.id) === currentDoctor)) {
+                select.value = currentDoctor;
+            } else if (items.length > 0) {
+                // Pick earliest-added doctor as default (lowest id).
+                const firstAddedDoctor = items.reduce((earliest, doctor) => (
+                    Number(doctor.id) < Number(earliest.id) ? doctor : earliest
+                ), items[0]);
+                select.value = String(firstAddedDoctor.id);
+            }
+
+            fetchNextToken();
+        }
+
+        async function fetchNextToken() {
+            const form = document.getElementById("patientRegisterForm");
+            const doctorId = form.elements.doctor_id.value;
+            const slotDate = form.elements.slot_date.value;
+            const tokenInput = document.getElementById("tokenInput");
+            const capacityInfo = document.getElementById("capacityInfo");
+            const submitBtn = form.querySelector('button[type="submit"]');
+
+            if (!doctorId || !slotDate) {
+                tokenInput.value = "";
+                capacityInfo.textContent = "";
+                submitBtn.disabled = false;
+                return;
+            }
+
+            const res = await fetch(`/api/appointments/next-token/?doctor_id=${encodeURIComponent(doctorId)}&slot_date=${encodeURIComponent(slotDate)}`, {
+                credentials: "same-origin",
+            });
+            const data = await res.json().catch(() => ({}));
+
+            if (!res.ok || data.full) {
+                tokenInput.value = "";
+                capacityInfo.style.color = "#c0392b";
+                capacityInfo.textContent = data.message || `Fully booked (${data.booked_count}/${data.daily_capacity})`;
+                submitBtn.disabled = true;
+                return;
+            }
+
+            tokenInput.value = data.next_token;
+            capacityInfo.style.color = "#155724";
+            capacityInfo.textContent = `${data.booked_count} of ${data.daily_capacity} slots used — Token #${data.next_token} assigned`;
+            submitBtn.disabled = false;
+        }
+
+        document.getElementById("patientRegisterForm").addEventListener("submit", async (e) => {
+            e.preventDefault();
+
+            const form = e.target;
+            const formData = new FormData(form);
+            const messageBox = document.getElementById("patientRegisterMessage");
+
+            const registerPayload = new URLSearchParams(formData);
+            registerPayload.delete("doctor_id");
+            registerPayload.delete("slot_date");
+            registerPayload.delete("token");
+            registerPayload.delete("visit_type");
+            registerPayload.delete("channel");
+
+            const res = await fetch(form.action, {
+                method: "POST",
+                headers: {
+                    "X-CSRFToken": getCSRFToken(),
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                body: registerPayload,
+                credentials: "same-origin",
+            });
+
+            const data = await res.json().catch(() => ({}));
+            messageBox.style.display = "block";
+
+            if (res.ok) {
+                const appointmentPayload = new URLSearchParams({
+                    patient_id: data.patient_id,
+                    doctor_id: formData.get("doctor_id") || "",
+                    slot_date: formData.get("slot_date") || "",
+                    token: formData.get("token") || "",
+                    visit_type: formData.get("visit_type") || "NEW",
+                    channel: formData.get("channel") || "WALK_IN",
+                });
+
+                const appointmentRes = await fetch("/api/appointments/book/", {
+                    method: "POST",
+                    headers: { "X-CSRFToken": getCSRFToken(), "Content-Type": "application/x-www-form-urlencoded" },
+                    body: appointmentPayload,
+                    credentials: "same-origin",
+                });
+                const appointmentData = await appointmentRes.json().catch(() => ({}));
+
+                if (appointmentRes.ok) {
+                    messageBox.className = "result-box result-success";
+                    messageBox.textContent =
+                        `Patient successfully added. OPD Number: ${data.opd_number}\n` +
+                        `Appointment booked successfully. Token: ${formData.get("token") || "-"}`;
+                } else {
+                    messageBox.className = "result-box result-error";
+                    const appointmentErrorMessage = {
+                        doctor_daily_capacity_reached: "This doctor has reached the maximum patient limit for the selected date.",
+                        invalid_slot: "Selected slot is not available. Please choose another date or doctor.",
+                        invalid_token: "Selected token is not available. Please try again.",
+                        entity_not_found: "Patient or doctor not found. Please try again.",
+                        validation_failed: "Please fill all required fields correctly.",
+                    }[appointmentData.error] || (appointmentData.error || "Appointment booking failed.");
+                    messageBox.textContent =
+                        `Patient successfully added. OPD Number: ${data.opd_number}\n` +
+                        appointmentErrorMessage;
+                }
+
+                form.reset();
+                setDefaultSlotDate();
+                document.getElementById("capacityInfo").textContent = "";
+                document.getElementById("tokenInput").value = "";
+                loadDoctors();
+                return;
+            }
+
+            if (data.warning === "possible_duplicate") {
+                messageBox.className = "result-box result-error";
+                messageBox.textContent = "Possible duplicate patient found. Please review and submit again if needed.";
+                return;
+            }
+
+            messageBox.className = "result-box result-error";
+            messageBox.textContent = data.error || "Registration failed";
+        });
+
+        document.querySelector('#patientRegisterForm input[name="slot_date"]').addEventListener("change", async () => {
+            await loadDoctors();
+            fetchNextToken();
+        });
+
+        document.querySelector('#patientRegisterForm select[name="doctor_id"]').addEventListener("change", fetchNextToken);
+
+        setDefaultSlotDate();
+        loadDoctors();
+    </script>
+</div>
+{% endblock %}

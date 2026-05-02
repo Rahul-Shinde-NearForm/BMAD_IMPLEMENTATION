@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% block title %}Prescription - OPD Management System{% endblock %}
+{% block page_title %}Prescription{% endblock %}
+
+{% block content %}
+<div class="container">
+    <section class="toolbar">
+        <button class="btn-link" onclick="window.location.href = document.referrer || '/'">&#8592; Back</button>
+    </section>
+
+    <section>
+        <h2>Prescription History</h2>
+        <form id="prescriptionHistoryForm" class="form-grid" style="max-width: 640px;">
+            <label>Patient Name <input type="text" name="name" placeholder="e.g. Ravi Patil" /></label>
+            <label>Mobile Number <input type="text" name="phone" placeholder="e.g. 9876543210" /></label>
+            <div><button type="submit">Fetch History</button></div>
+        </form>
+        <div id="prescriptionHistoryResult" class="result-box"></div>
+    </section>
+
+    <section id="prescriptionViewerSection" style="display:none; margin-top: 1.5rem;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem; gap:1rem;">
+            <h2 style="margin:0;">Prescription View</h2>
+            <button type="button" id="closePrescriptionViewerBtn">Close</button>
+        </div>
+        <iframe id="prescriptionViewerFrame" title="Prescription Viewer"
+            style="width:100%; min-height:900px; border:1px solid #c6d7fa; border-radius:8px; background:#fff;"></iframe>
+    </section>
+</div>
+
+<script>
+    function getCSRFToken() {
+        const match = document.cookie.match(/csrftoken=([^;]+)/);
+        return match ? match[1] : "";
+    }
+
+    function escapeHtml(text) {
+        if (text === null || text === undefined) return "-";
+        return String(text)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/\"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+    function openPrescriptionViewer(consultationId) {
+        const viewerSection = document.getElementById("prescriptionViewerSection");
+        const viewerFrame = document.getElementById("prescriptionViewerFrame");
+        viewerFrame.src = `/consultations/${consultationId}/prescription/print/`;
+        viewerSection.style.display = "block";
+        viewerSection.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    function closePrescriptionViewer() {
+        const viewerSection = document.getElementById("prescriptionViewerSection");
+        const viewerFrame = document.getElementById("prescriptionViewerFrame");
+        viewerFrame.src = "about:blank";
+        viewerSection.style.display = "none";
+    }
+
+    document.getElementById("closePrescriptionViewerBtn").addEventListener("click", closePrescriptionViewer);
+
+    document.getElementById("prescriptionHistoryForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const resultEl = document.getElementById("prescriptionHistoryResult");
+        resultEl.className = "result-box";
+        resultEl.textContent = "Loading prescription history...";
+
+        const params = new URLSearchParams(new FormData(e.target));
+        const res = await fetch(`/api/prescriptions/history/?${params.toString()}`, {
+            credentials: "same-origin",
+        });
+        let data = {};
+        try {
+            data = await res.json();
+        } catch (_) {
+            resultEl.className = "result-box result-error";
+            resultEl.textContent = "Unexpected server response.";
+            return;
+        }
+
+        if (!res.ok) {
+            resultEl.className = "result-box result-error";
+            resultEl.textContent = data.error === "name_or_phone_required"
+                ? "Please enter patient name or mobile number."
+                : (data.error || "Unable to fetch prescription history.");
+            return;
+        }
+
+        const items = data.items || [];
+        if (!items.length) {
+            resultEl.className = "result-box result-success";
+            resultEl.textContent = "No prescription history found.";
+            return;
+        }
+
+        let html = "<table style='width:100%; border-collapse:collapse; font-size:0.92rem;'>";
+        html += "<thead><tr style='background:#dce8ff; font-weight:600;'>";
+        html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Issued At</th>";
+        html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Rx No.</th>";
+        html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Patient</th>";
+        html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Mobile</th>";
+        html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Doctor</th>";
+        html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Diagnosis</th>";
+        html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Items</th>";
+        html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Actions</th>";
+        html += "</tr></thead><tbody>";
+
+        items.forEach((item) => {
+            html += "<tr>";
+            html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.issued_at)}</td>`;
+            html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.rx_number)}</td>`;
+            html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.patient_name)}</td>`;
+            html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.mobile)}</td>`;
+            html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.doctor_name)}</td>`;
+            html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.diagnosis || "-")}</td>`;
+            html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.item_count)}</td>`;
+            html += "<td style='border:1px solid #c6d7fa; padding:8px; white-space:nowrap;'>" +
+                `<button type='button' onclick='openPrescriptionViewer(${item.consultation_id})' style='padding:4px 8px; font-size:0.82rem; margin-right:6px; background:#1a4d6d; color:#fff; border:none; border-radius:4px; cursor:pointer;'>View</button>` +
+                `<a class='btn-link' style='padding:4px 8px; font-size:0.82rem;' target='_blank' href='/consultations/${item.consultation_id}/prescription/print/?print=1'>Print</a>` +
+                "</td>";
+            html += "</tr>";
+        });
+
+        html += "</tbody></table>";
+        resultEl.className = "result-box result-success";
+        resultEl.innerHTML = html;
+    });
+</script>
+{% endblock %}

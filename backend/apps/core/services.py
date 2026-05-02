@@ -35,8 +35,6 @@ ROLE_PERMISSION_MATRIX = {
     "Admin": ["view_patient", "add_patient", "change_patient", "delete_patient"],
 }
 
-OVERBOOKING_LIMIT = 2
-
 APPOINTMENT_TRANSITIONS = {
     "BOOKED": {"RESCHEDULED", "COMPLETED", "CANCELLED"},
     "RESCHEDULED": {"RESCHEDULED", "COMPLETED", "CANCELLED"},
@@ -82,11 +80,19 @@ def find_duplicate_candidates(cleaned_data):
     return Patient.objects.filter(query).distinct()
 
 
-def search_patients(mrn="", phone="", name="", dob=""):
+def search_patients(mrn="", phone="", name="", dob="", age=None, opd_number=""):
     queryset = Patient.objects.all()
+
+    def _safe_year_replace(date_obj, year):
+        try:
+            return date_obj.replace(year=year)
+        except ValueError:
+            return date_obj.replace(month=2, day=28, year=year)
 
     if mrn:
         queryset = queryset.filter(mrn__iexact=mrn)
+    if opd_number:
+        queryset = queryset.filter(opd_number__iexact=opd_number)
     if phone:
         queryset = queryset.filter(phone=phone)
     if name:
@@ -97,6 +103,11 @@ def search_patients(mrn="", phone="", name="", dob=""):
             queryset = queryset.filter(Q(first_name__iexact=name) | Q(last_name__iexact=name))
     if dob:
         queryset = queryset.filter(dob=dob)
+    if age is not None:
+        today = timezone.localdate()
+        min_dob = _safe_year_replace(today, today.year - age - 1) + timedelta(days=1)
+        max_dob = _safe_year_replace(today, today.year - age)
+        queryset = queryset.filter(dob__gte=min_dob, dob__lte=max_dob)
 
     return queryset.distinct()
 
@@ -138,16 +149,24 @@ def generate_slots_for_day(slot_date, start_time, end_time, break_start, break_e
 def upsert_doctor_schedule(data, actor_username):
     doctor, _ = Doctor.objects.get_or_create(
         full_name=data["doctor_name"],
-        defaults={"specialty": data["specialty"]},
+        defaults={
+            "specialty": data["specialty"],
+            "daily_patient_capacity": data.get("daily_patient_capacity") or 50,
+        },
     )
     if doctor.specialty != data["specialty"]:
         doctor.specialty = data["specialty"]
         doctor.save(update_fields=["specialty"])
 
+    if data.get("daily_patient_capacity") and doctor.daily_patient_capacity != data["daily_patient_capacity"]:
+        doctor.daily_patient_capacity = data["daily_patient_capacity"]
+        doctor.save(update_fields=["daily_patient_capacity"])
+
     schedule, created = DoctorScheduleTemplate.objects.get_or_create(
         doctor=doctor,
         day_of_week=data["day_of_week"],
         defaults={
+            "daily_patient_capacity": data.get("daily_patient_capacity") or doctor.daily_patient_capacity,
             "start_time": data["start_time"],
             "end_time": data["end_time"],
             "break_start": data.get("break_start"),
@@ -161,6 +180,7 @@ def upsert_doctor_schedule(data, actor_username):
 
     if not created:
         schedule.version += 1
+        schedule.daily_patient_capacity = data.get("daily_patient_capacity") or doctor.daily_patient_capacity
         schedule.start_time = data["start_time"]
         schedule.end_time = data["end_time"]
         schedule.break_start = data.get("break_start")
@@ -214,29 +234,68 @@ def _validate_slot_exists(doctor_id, slot_date, start_time, end_time):
     ).exists()
 
 
+def _get_available_slot(doctor_id, slot_date, start_time):
+    return DoctorSlot.objects.filter(
+        doctor_id=doctor_id,
+        slot_date=slot_date,
+        start_time=start_time,
+        status="AVAILABLE",
+    ).first()
+
+
+def _get_available_slot_by_token(doctor_id, slot_date, token):
+    if token < 1:
+        return None
+    slots = DoctorSlot.objects.filter(
+        doctor_id=doctor_id,
+        slot_date=slot_date,
+        status="AVAILABLE",
+    ).order_by("start_time")
+    return slots[token - 1] if slots.count() >= token else None
+
+
+def get_doctor_capacity_for_date(doctor, slot_date):
+    schedule = DoctorScheduleTemplate.objects.filter(
+        doctor_id=doctor.id,
+        day_of_week=slot_date.weekday(),
+    ).first()
+    if schedule and schedule.daily_patient_capacity:
+        return schedule.daily_patient_capacity
+    return doctor.daily_patient_capacity
+
+
 def _is_overbooked(doctor_id, slot_date, skip_appointment_id=None):
-    capacity = DoctorSlot.objects.filter(doctor_id=doctor_id, slot_date=slot_date, status="AVAILABLE").count()
+    doctor = Doctor.objects.get(id=doctor_id)
+    capacity = get_doctor_capacity_for_date(doctor, slot_date)
     active = Appointment.objects.filter(doctor_id=doctor_id, slot_date=slot_date).exclude(status="CANCELLED")
     if skip_appointment_id:
         active = active.exclude(id=skip_appointment_id)
-    return active.count() >= (capacity + OVERBOOKING_LIMIT)
+    return active.count() >= capacity
 
 
 @transaction.atomic
 def book_appointment(data, actor_username):
     patient = Patient.objects.get(id=data["patient_id"])
     doctor = Doctor.objects.get(id=data["doctor_id"])
-    if not _validate_slot_exists(doctor.id, data["slot_date"], data["start_time"], data["end_time"]):
-        raise ValueError("invalid_slot")
+    token = data.get("token")
+    start_time = data.get("start_time")
+
+    if token:
+        slot = _get_available_slot_by_token(doctor.id, data["slot_date"], token)
+    else:
+        slot = _get_available_slot(doctor.id, data["slot_date"], start_time)
+
+    if not slot:
+        raise ValueError("invalid_token" if token else "invalid_slot")
     if _is_overbooked(doctor.id, data["slot_date"]):
-        raise ValueError("overbooking_limit_reached")
+        raise ValueError("doctor_daily_capacity_reached")
 
     appointment = Appointment.objects.create(
         patient=patient,
         doctor=doctor,
         slot_date=data["slot_date"],
-        start_time=data["start_time"],
-        end_time=data["end_time"],
+        start_time=slot.start_time,
+        end_time=slot.end_time,
         visit_type=data["visit_type"],
         channel=data["channel"],
         status="BOOKED",
@@ -257,15 +316,27 @@ def reschedule_appointment(appointment, data, actor_username):
     target_status = "RESCHEDULED"
     if not is_transition_allowed(appointment.status, target_status):
         raise ValueError("invalid_transition")
-    if not _validate_slot_exists(appointment.doctor_id, data["slot_date"], data["start_time"], data["end_time"]):
-        raise ValueError("invalid_slot")
+
+    token = data.get("token")
+    if token:
+        slot = _get_available_slot_by_token(appointment.doctor_id, data["slot_date"], token)
+        if not slot:
+            raise ValueError("invalid_token")
+        start_time = slot.start_time
+        end_time = slot.end_time
+    else:
+        if not _validate_slot_exists(appointment.doctor_id, data["slot_date"], data["start_time"], data["end_time"]):
+            raise ValueError("invalid_slot")
+        start_time = data["start_time"]
+        end_time = data["end_time"]
+
     if _is_overbooked(appointment.doctor_id, data["slot_date"], skip_appointment_id=appointment.id):
-        raise ValueError("overbooking_limit_reached")
+        raise ValueError("doctor_daily_capacity_reached")
 
     previous = appointment.status
     appointment.slot_date = data["slot_date"]
-    appointment.start_time = data["start_time"]
-    appointment.end_time = data["end_time"]
+    appointment.start_time = start_time
+    appointment.end_time = end_time
     appointment.status = target_status
     appointment.save()
 
@@ -636,7 +707,7 @@ def issue_prescription(consultation_id, payload, actor_username):
         patient_id=consultation.patient_id,
         doctor_id=consultation.doctor_id,
         doctor_qualification=payload.get("doctor_qualification", ""),
-        doctor_reg_number=payload.get("doctor_reg_number", ""),
+        doctor_reg_number=payload.get("doctor_reg_number") or consultation.doctor.reg_number,
         clinic_name=payload.get("clinic_name", ""),
         clinic_address=payload.get("clinic_address", ""),
         items=items,
@@ -647,6 +718,41 @@ def issue_prescription(consultation_id, payload, actor_username):
         rx_number="",   # auto-generated by model.save()
         issued_by=actor_username,
     )
+
+    # Once prescription is issued, the visit is considered complete.
+    appointment = consultation.appointment
+    if appointment.status in {"BOOKED", "RESCHEDULED"}:
+        complete_appointment(appointment, actor_username)
+
+    return prescription
+
+
+@transaction.atomic
+def update_prescription(consultation_id, payload, actor_username):
+    consultation = Consultation.objects.get(id=consultation_id)
+    if not hasattr(consultation, "prescription"):
+        raise ValueError("prescription_not_found")
+
+    prescription = consultation.prescription
+    items = payload.get("items", [])
+    _validate_prescription_items(items)
+
+    prescription.items = items
+    if "doctor_qualification" in payload:
+        prescription.doctor_qualification = payload.get("doctor_qualification") or prescription.doctor_qualification
+    if "doctor_reg_number" in payload:
+        prescription.doctor_reg_number = payload.get("doctor_reg_number") or consultation.doctor.reg_number
+    if "clinic_name" in payload:
+        prescription.clinic_name = payload.get("clinic_name", "")
+    if "clinic_address" in payload:
+        prescription.clinic_address = payload.get("clinic_address", "")
+    if "special_instructions" in payload:
+        prescription.special_instructions = payload.get("special_instructions", "")
+    if "validity_days" in payload and payload.get("validity_days"):
+        prescription.validity_days = payload.get("validity_days")
+
+    prescription.issued_by = actor_username
+    prescription.save()
     return prescription
 
 
@@ -667,6 +773,21 @@ def create_medical_order(consultation_id, order_type, description, actor_usernam
         created_by=actor_username,
     )
     return order
+
+
+@transaction.atomic
+def create_medical_order_for_patient(patient_id, order_type, description, actor_username):
+    consultation = (
+        Consultation.objects.select_related("patient", "appointment")
+        .filter(patient_id=patient_id, status="FINALIZED")
+        .order_by("-finalized_at", "-created_at")
+        .first()
+    )
+    if consultation is None:
+        raise ValueError("finalized_consultation_not_found")
+
+    order = create_medical_order(consultation.id, order_type, description, actor_username)
+    return order, consultation
 
 
 # ---------------------------------------------------------------------------

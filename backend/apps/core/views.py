@@ -1,3 +1,4 @@
+import json
 import logging
 from urllib.parse import urlencode
 from datetime import datetime
@@ -5,10 +6,12 @@ from datetime import datetime
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import Group, User
 from django.db import connections
+from django.db.models import Q
 from django.db.utils import OperationalError
 from django.http import HttpResponse
 from django.http import JsonResponse
 from django.shortcuts import redirect, render
+from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.http import require_GET, require_POST
 
 from .forms import (
@@ -27,7 +30,7 @@ from .forms import (
 	UserRoleAssignForm,
 	VitalsForm,
 )
-from .models import Appointment, BillingHandoff, Consultation, Doctor, IncidentRecord, MedicalOrder, Patient, Prescription, QueueItem, ReportExport, Vitals
+from .models import Appointment, BillingHandoff, Consultation, Doctor, DoctorSlot, IncidentRecord, MedicalOrder, Patient, Prescription, QueueItem, ReportExport, Vitals
 from .authz import role_required
 from .services import (
 	ROLE_PERMISSION_MATRIX,
@@ -37,6 +40,7 @@ from .services import (
 	cancel_appointment,
 	complete_appointment,
 	create_medical_order,
+	create_medical_order_for_patient,
 	create_or_update_consultation_draft,
 	daily_kpi_metrics,
 	download_report_export,
@@ -44,10 +48,12 @@ from .services import (
 	finalize_consultation,
 	amend_consultation,
 	issue_prescription,
+	update_prescription,
 	generate_report_export,
 	create_incident_record,
 	patient_opd_history,
 	observability_snapshot,
+	get_doctor_capacity_for_date,
 	record_vitals,
 	resolve_incident_record,
 	find_duplicate_candidates,
@@ -66,6 +72,11 @@ from .services import (
 
 
 audit_logger = logging.getLogger("audit")
+
+
+def _age_from_dob(dob):
+	today = datetime.utcnow().date()
+	return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
 
 
 def _redirect_user_mgmt(status, message):
@@ -96,6 +107,41 @@ def receptionist_workbench(request):
 @role_required("Doctor", "Admin")
 def doctor_workbench(request):
 	return render(request, "workbench_doctor.html")
+
+
+@require_GET
+@login_required
+@role_required("Doctor", "Admin")
+def doctor_appointments_page(request):
+	return render(request, "doctor_appointments.html")
+
+
+@require_GET
+@login_required
+@role_required("Doctor", "Admin")
+def doctor_consultation_page(request):
+	return render(request, "doctor_consultation.html")
+
+
+@require_GET
+@login_required
+@role_required("Doctor", "Admin")
+def doctor_vitals_orders_page(request):
+	return render(request, "doctor_vitals_orders.html")
+
+
+@require_GET
+@login_required
+@role_required("Doctor", "Admin")
+def doctor_prescription_page(request):
+	return render(request, "doctor_prescription.html")
+
+
+@require_GET
+@login_required
+@role_required("Doctor", "Admin")
+def doctor_queue_page(request):
+	return render(request, "doctor_queue.html")
 
 
 @require_GET
@@ -162,6 +208,10 @@ def patient_register(request):
 			"status": "created",
 			"patient_id": patient.id,
 			"mrn": patient.mrn,
+			"opd_number": patient.opd_number,
+			"age": _age_from_dob(patient.dob),
+			"weight_kg": str(patient.weight_kg) if patient.weight_kg is not None else None,
+			"known_history": patient.known_history,
 			"uhid": patient.mrn,
 		},
 		status=201,
@@ -187,7 +237,56 @@ def patient_update(request, patient_id):
 			"status": "updated",
 			"patient_id": updated.id,
 			"mrn": updated.mrn,
+			"opd_number": updated.opd_number,
+			"age": _age_from_dob(updated.dob),
+			"weight_kg": str(updated.weight_kg) if updated.weight_kg is not None else None,
 			"phone": updated.phone,
+		}
+	)
+
+
+@require_GET
+@login_required
+@role_required("Receptionist", "Admin")
+def patient_detail(request, patient_id):
+	try:
+		patient = Patient.objects.get(id=patient_id)
+	except Patient.DoesNotExist:
+		return JsonResponse({"error": "patient_not_found"}, status=404)
+
+	return JsonResponse({
+		"id": patient.id,
+		"first_name": patient.first_name,
+		"last_name": patient.last_name,
+		"age": _age_from_dob(patient.dob),
+		"weight_kg": str(patient.weight_kg) if patient.weight_kg is not None else None,
+		"known_history": patient.known_history,
+		"gender": patient.gender,
+		"phone": patient.phone,
+		"address_line1": patient.address_line1,
+		"opd_number": patient.opd_number,
+		"mrn": patient.mrn,
+	})
+
+
+@require_POST
+@login_required
+@role_required("Doctor", "Admin")
+def patient_known_history_update(request, patient_id):
+	try:
+		patient = Patient.objects.get(id=patient_id)
+	except Patient.DoesNotExist:
+		return JsonResponse({"error": "patient_not_found"}, status=404)
+
+	known_history = request.POST.get("known_history", "")
+	patient.known_history = known_history
+	patient.save(update_fields=["known_history"])
+
+	return JsonResponse(
+		{
+			"status": "updated",
+			"patient_id": patient.id,
+			"known_history": patient.known_history,
 		}
 	)
 
@@ -206,6 +305,7 @@ def patient_opd_history_view(request, patient_id):
 		{
 			"patient_id": patient.id,
 			"patient_name": f"{patient.first_name} {patient.last_name}",
+			"weight_kg": str(patient.weight_kg) if patient.weight_kg is not None else None,
 			"mrn": patient.mrn,
 			"opd_history": [
 				{
@@ -213,6 +313,10 @@ def patient_opd_history_view(request, patient_id):
 					"opd_number": a.opd_number,
 					"slot_date": str(a.slot_date),
 					"doctor_id": a.doctor_id,
+					"doctor_name": a.doctor.full_name,
+					"start_time": a.start_time.strftime("%H:%M"),
+					"visit_type": a.visit_type,
+					"channel": a.channel,
 					"status": a.status,
 				}
 				for a in history
@@ -230,29 +334,223 @@ def patient_register_form(request):
 
 @require_GET
 @login_required
+@role_required("Receptionist", "Admin")
+def appointment_book_form(request):
+	return render(request, "appointment_book.html")
+
+
+@require_GET
+@login_required
+@role_required("Receptionist", "Admin")
+def patient_edit_form(request):
+	return render(request, "patient_edit.html")
+
+
+@require_GET
+@login_required
+@role_required("Receptionist", "Admin")
+def doctor_schedule_form(request):
+	return render(request, "doctor_schedule.html")
+
+
+@require_GET
+@login_required
+@role_required("Receptionist", "Admin")
+def patient_reminder_form(request):
+	return render(request, "patient_reminder.html")
+
+
+@require_GET
+@login_required
+def user_profile_form(request):
+	return render(request, "user_profile.html")
+
+
+@require_GET
+@login_required
+def user_profile_get(request):
+	user = request.user
+	profile = user.profile if hasattr(user, 'profile') else None
+	doctor_profile = getattr(user, "doctor_profile", None)
+	
+	roles = []
+	if user.groups.filter(name__icontains="Doctor").exists():
+		roles.append("Doctor")
+	if user.groups.filter(name__icontains="Receptionist").exists():
+		roles.append("Receptionist")
+	if user.groups.filter(name__icontains="Pharmacist").exists():
+		roles.append("Pharmacist")
+	if user.is_staff:
+		roles.append("Admin")
+	
+	return JsonResponse({
+		"first_name": user.first_name,
+		"last_name": user.last_name,
+		"email": user.email,
+		"phone": profile.phone if profile else "",
+		"reg_number": doctor_profile.reg_number if doctor_profile else "",
+		"bio": profile.bio if profile else "",
+		"department": profile.department if profile else "",
+		"roles": roles,
+	})
+
+
+@require_POST
+@login_required
+def user_profile_update(request):
+	try:
+		data = json.loads(request.body)
+		user = request.user
+		
+		# Update User model
+		user.first_name = data.get("first_name", user.first_name)
+		user.last_name = data.get("last_name", user.last_name)
+		user.email = data.get("email", user.email)
+		user.save()
+		
+		# Update or create UserProfile
+		from .models import UserProfile
+		profile, created = UserProfile.objects.get_or_create(user=user)
+		profile.phone = data.get("phone", profile.phone)
+		profile.bio = data.get("bio", profile.bio)
+		profile.department = data.get("department", profile.department)
+		profile.save()
+
+		doctor_profile = getattr(user, "doctor_profile", None)
+		if doctor_profile is not None:
+			doctor_profile.reg_number = data.get("reg_number", doctor_profile.reg_number)
+			doctor_profile.save(update_fields=["reg_number"])
+		
+		return JsonResponse({"status": "ok", "message": "Profile updated successfully"})
+	except Exception as e:
+		audit_logger.error("profile_update_error", extra={"user": request.user.username, "error": str(e)})
+		return JsonResponse({"error": str(e)}, status=400)
+
+
+@require_GET
+@login_required
 @role_required("Receptionist", "Doctor", "Pharmacist", "Admin")
 def patient_search(request):
 	mrn = request.GET.get("mrn", "").strip()
+	opd_number = request.GET.get("opd_number", "").strip()
 	phone = request.GET.get("phone", "").strip()
 	name = request.GET.get("name", "").strip()
 	dob = request.GET.get("dob", "").strip()
+	age_raw = request.GET.get("age", "").strip()
+	age = None
+	if age_raw:
+		try:
+			age = int(age_raw)
+		except ValueError:
+			return JsonResponse({"error": "invalid_age"}, status=400)
 
-	patients = search_patients(mrn=mrn, phone=phone, name=name, dob=dob)
+	patients = search_patients(mrn=mrn, phone=phone, name=name, dob=dob, age=age, opd_number=opd_number)
 	items = [
 		{
 			"id": patient.id,
-			"mrn": patient.mrn,
+			"opd_number": patient.opd_number,
 			"full_name": f"{patient.first_name} {patient.last_name}",
+			"first_name": patient.first_name,
+			"last_name": patient.last_name,
 			"phone": patient.phone,
-			"dob": str(patient.dob),
+			"age": _age_from_dob(patient.dob),
+			"weight_kg": str(patient.weight_kg) if patient.weight_kg is not None else None,
+			"known_history": patient.known_history,
+			"gender": patient.get_gender_display(),
+			"address": patient.address_line1,
 		}
 		for patient in patients[:20]
 	]
 
-	query_type = "mrn" if mrn else "phone" if phone else "name_dob" if (name or dob) else "none"
-	query_value = mrn or phone or f"{name}|{dob}"
+	query_type = "patient_opd_number" if opd_number else "mrn" if mrn else "phone" if phone else "name_age" if (name or age_raw) else "none"
+	query_value = opd_number or mrn or phone or f"{name}|{age_raw or dob}"
 	log_search(request.user.username, query_type, query_value, len(items))
 
+	return JsonResponse({"items": items})
+
+
+@require_GET
+@login_required
+@role_required("Receptionist", "Admin")
+def appointment_next_token(request):
+	"""Return the next available token for a doctor on a given date."""
+	doctor_id = request.GET.get("doctor_id", "").strip()
+	slot_date = request.GET.get("slot_date", "").strip()
+	if not doctor_id or not slot_date:
+		return JsonResponse({"error": "doctor_id and slot_date are required"}, status=400)
+	try:
+		doctor = Doctor.objects.get(id=int(doctor_id))
+	except (Doctor.DoesNotExist, ValueError):
+		return JsonResponse({"error": "doctor_not_found"}, status=404)
+	try:
+		parsed_date = datetime.strptime(slot_date, "%Y-%m-%d").date()
+	except ValueError:
+		return JsonResponse({"error": "invalid_slot_date"}, status=400)
+	booked_count = Appointment.objects.filter(
+		doctor_id=doctor.id,
+		slot_date=parsed_date,
+	).exclude(status="CANCELLED").count()
+	capacity = get_doctor_capacity_for_date(doctor, parsed_date)
+	if booked_count >= capacity:
+		return JsonResponse({
+			"full": True,
+			"booked_count": booked_count,
+			"daily_capacity": capacity,
+			"message": f"Doctor has reached daily capacity ({capacity} patients).",
+		})
+	return JsonResponse({
+		"full": False,
+		"next_token": booked_count + 1,
+		"booked_count": booked_count,
+		"daily_capacity": capacity,
+	})
+
+
+@require_GET
+@login_required
+@role_required("Receptionist", "Doctor", "Admin")
+def doctor_list(request):
+	slot_date = request.GET.get("slot_date", "").strip()
+	start_time = request.GET.get("start_time", "").strip()
+	apply_availability_filter = bool(slot_date or start_time)
+	parsed_slot_date = None
+	parsed_start_time = None
+
+	if slot_date:
+		try:
+			parsed_slot_date = datetime.strptime(slot_date, "%Y-%m-%d").date()
+		except ValueError:
+			return JsonResponse({"error": "invalid_slot_date"}, status=400)
+
+	if start_time:
+		try:
+			parsed_start_time = datetime.strptime(start_time, "%H:%M").time()
+		except ValueError:
+			return JsonResponse({"error": "invalid_start_time"}, status=400)
+
+	if not apply_availability_filter:
+		doctors = Doctor.objects.order_by("full_name")
+	else:
+		available_slots = DoctorSlot.objects.filter(status="AVAILABLE")
+		if parsed_slot_date:
+			available_slots = available_slots.filter(slot_date=parsed_slot_date)
+		if parsed_start_time:
+			available_slots = available_slots.filter(start_time=parsed_start_time)
+
+		doctor_ids = available_slots.values_list("doctor_id", flat=True).distinct()
+		doctors = Doctor.objects.filter(id__in=doctor_ids).order_by("full_name")
+
+		if parsed_slot_date:
+			eligible_doctors = []
+			for doctor in doctors:
+				active_count = Appointment.objects.filter(
+					doctor_id=doctor.id,
+					slot_date=parsed_slot_date,
+				).exclude(status="CANCELLED").count()
+				if active_count < get_doctor_capacity_for_date(doctor, parsed_slot_date):
+					eligible_doctors.append(doctor.id)
+			doctors = doctors.filter(id__in=eligible_doctors)
+	items = [{"id": doctor.id, "name": doctor.full_name, "specialty": doctor.specialty} for doctor in doctors]
 	return JsonResponse({"items": items})
 
 
@@ -281,7 +579,7 @@ def appointment_book(request):
 	except (Patient.DoesNotExist, Doctor.DoesNotExist):
 		return JsonResponse({"error": "entity_not_found"}, status=404)
 	except Exception as exc:
-		if str(exc) in {"invalid_slot", "overbooking_limit_reached"}:
+		if str(exc) in {"invalid_slot", "invalid_token", "doctor_daily_capacity_reached"}:
 			return JsonResponse({"error": str(exc)}, status=409)
 		raise
 
@@ -299,7 +597,7 @@ def appointment_book(request):
 		{
 			"status": "BOOKED",
 			"appointment_id": appointment.id,
-			"opd_number": appointment.opd_number,
+			"patient_opd_number": appointment.patient.opd_number,
 			"patient_mrn": appointment.patient.mrn,
 			"previous_opd_history": history,
 		},
@@ -327,17 +625,44 @@ def appointment_complete(request, appointment_id):
 @require_GET
 @login_required
 @role_required("Doctor", "Admin")
+@login_required(login_url="/login/")
+@role_required("Doctor", "Admin")
 def doctor_today_appointments(request):
-	doctor_id = request.GET.get("doctor_id")
-	if not doctor_id:
-		return JsonResponse({"error": "doctor_id_required"}, status=400)
-	try:
-		doctor = Doctor.objects.get(id=doctor_id)
-	except Doctor.DoesNotExist:
-		return JsonResponse({"error": "doctor_not_found"}, status=404)
-
 	from django.utils import timezone
+	from datetime import timedelta
+	
+	# Try to get the doctor associated with the logged-in user
+	doctor = None
+	
+	# First, try direct user link
+	try:
+		doctor = Doctor.objects.get(user=request.user)
+	except Doctor.DoesNotExist:
+		pass
+	
+	# If no direct link, try matching by username (case-insensitive)
+	if not doctor:
+		try:
+			doctor = Doctor.objects.get(full_name__icontains=request.user.username)
+		except Doctor.DoesNotExist:
+			pass
+	
+	# If still no match, try matching by first name
+	if not doctor and request.user.first_name:
+		try:
+			doctor = Doctor.objects.get(full_name__icontains=request.user.first_name)
+		except Doctor.DoesNotExist:
+			pass
+	
+	if not doctor:
+		return JsonResponse({"error": "no_doctor_profile_for_user", "details": f"Could not find doctor profile for user {request.user.username}"}, status=404)
+	
+	# Get date based on date_type parameter (today or tomorrow)
+	date_type = request.GET.get("date_type", "today")
 	for_date = timezone.localdate()
+	if date_type == "tomorrow":
+		for_date = for_date + timedelta(days=1)
+	
 	appointments = doctor_appointments_for_day(doctor.id, for_date)
 	return JsonResponse(
 		{
@@ -365,7 +690,14 @@ def doctor_today_appointments(request):
 @login_required
 @role_required("Receptionist", "Admin")
 def tomorrow_reminder_report_view(request):
-	doctor_id = request.GET.get("doctor_id")
+	doctor_name = request.GET.get("doctor_name")
+	doctor_id = None
+	if doctor_name:
+		try:
+			doctor = Doctor.objects.get(full_name__icontains=doctor_name)
+			doctor_id = doctor.id
+		except Doctor.DoesNotExist:
+			pass
 	target_date, items = tomorrow_reminder_report(doctor_id=doctor_id)
 	return JsonResponse(
 		{
@@ -386,6 +718,53 @@ def tomorrow_reminder_report_view(request):
 	)
 
 
+@require_GET
+@login_required
+@role_required("Receptionist", "Admin")
+def tomorrow_reminder_report_pdf_download_view(request):
+	doctor_name = (request.GET.get("doctor_name") or "").strip()
+	doctor_id = None
+	resolved_doctor_name = "All Doctors"
+	if doctor_name:
+		try:
+			doctor = Doctor.objects.get(full_name__icontains=doctor_name)
+			doctor_id = doctor.id
+			resolved_doctor_name = doctor.full_name
+		except Doctor.DoesNotExist:
+			resolved_doctor_name = doctor_name
+
+	target_date, items = tomorrow_reminder_report(doctor_id=doctor_id)
+
+	lines = [
+		"OPD Tomorrow Reminder Call List",
+		f"Date: {target_date}",
+		f"Doctor Filter: {resolved_doctor_name}",
+		f"Total Appointments: {len(items)}",
+		"",
+	]
+
+	if items:
+		for idx, appointment in enumerate(items, start=1):
+			patient_name = f"{appointment.patient.first_name} {appointment.patient.last_name}".strip()
+			lines.extend(
+				[
+					f"{idx}. {patient_name}",
+					f"   OPD Number: {appointment.opd_number or '-'}",
+					f"   Mobile: {appointment.patient.phone or '-'}",
+					f"   Doctor: {appointment.doctor.full_name}",
+					f"   Slot Time: {appointment.start_time.strftime('%H:%M')}",
+					"",
+				]
+			)
+	else:
+		lines.append("No appointments scheduled for tomorrow.")
+
+	pdf_like_content = "\n".join(lines)
+	response = HttpResponse(pdf_like_content, content_type="application/pdf")
+	response["Content-Disposition"] = f'attachment; filename="tomorrow-reminder-{target_date}.pdf"'
+	return response
+
+
 @require_POST
 @login_required
 @role_required("Receptionist", "Admin")
@@ -400,7 +779,7 @@ def appointment_reschedule(request, appointment_id):
 	except Appointment.DoesNotExist:
 		return JsonResponse({"error": "appointment_not_found"}, status=404)
 	except Exception as exc:
-		if str(exc) in {"invalid_transition", "invalid_slot", "overbooking_limit_reached"}:
+		if str(exc) in {"invalid_transition", "invalid_slot", "invalid_token", "doctor_daily_capacity_reached"}:
 			return JsonResponse({"error": str(exc)}, status=409)
 		raise
 
@@ -666,6 +1045,124 @@ def consultation_get(request, appointment_id):
 	)
 
 
+@require_GET
+@login_required
+@role_required("Doctor", "Admin")
+def consultation_context(request, appointment_id):
+	try:
+		appointment = Appointment.objects.select_related("patient", "doctor").get(id=appointment_id)
+	except Appointment.DoesNotExist:
+		return JsonResponse({"error": "appointment_not_found"}, status=404)
+
+	patient = appointment.patient
+	current_consultation = Consultation.objects.filter(appointment_id=appointment_id).first()
+	latest_vitals = Vitals.objects.filter(patient_id=patient.id).order_by("-recorded_at").first()
+
+	history_consultations = (
+		Consultation.objects
+		.select_related("doctor", "appointment")
+		.filter(patient_id=patient.id)
+		.exclude(appointment_id=appointment_id)
+		.order_by("-created_at")[:5]
+	)
+
+	history = []
+	for consultation in history_consultations:
+		weight_kg = None
+		if hasattr(consultation, "vitals") and consultation.vitals.weight_kg is not None:
+			weight_kg = str(consultation.vitals.weight_kg)
+
+		history.append(
+			{
+				"consultation_id": consultation.id,
+				"appointment_id": consultation.appointment_id,
+				"doctor_name": consultation.doctor.full_name,
+				"slot_date": str(consultation.appointment.slot_date),
+				"chief_complaint": consultation.chief_complaint,
+				"diagnosis": consultation.diagnosis,
+				"notes": consultation.notes,
+				"weight_kg": weight_kg,
+			}
+		)
+
+	last_prescription = (
+		Prescription.objects
+		.select_related("consultation", "doctor")
+		.filter(patient_id=patient.id)
+		.exclude(consultation__appointment_id=appointment_id)
+		.order_by("-issued_at")
+		.first()
+	)
+
+	last_prescription_payload = None
+	if last_prescription:
+		last_prescription_payload = {
+			"prescription_id": last_prescription.id,
+			"consultation_id": last_prescription.consultation_id,
+			"rx_number": last_prescription.rx_number,
+			"issued_at": last_prescription.issued_at.strftime("%d/%m/%Y %H:%M"),
+			"doctor_name": last_prescription.doctor.full_name,
+			"special_instructions": last_prescription.special_instructions,
+			"items": last_prescription.items,
+		}
+
+	context_vitals = None
+	if current_consultation and hasattr(current_consultation, "vitals"):
+		vitals = current_consultation.vitals
+		context_vitals = {
+			"temperature_c": str(vitals.temperature_c) if vitals.temperature_c is not None else None,
+			"pulse_bpm": vitals.pulse_bpm,
+			"bp_systolic": vitals.bp_systolic,
+			"bp_diastolic": vitals.bp_diastolic,
+			"spo2_pct": vitals.spo2_pct,
+			"weight_kg": str(vitals.weight_kg) if vitals.weight_kg is not None else None,
+			"height_cm": str(vitals.height_cm) if vitals.height_cm is not None else None,
+		}
+	elif latest_vitals:
+		context_vitals = {
+			"temperature_c": str(latest_vitals.temperature_c) if latest_vitals.temperature_c is not None else None,
+			"pulse_bpm": latest_vitals.pulse_bpm,
+			"bp_systolic": latest_vitals.bp_systolic,
+			"bp_diastolic": latest_vitals.bp_diastolic,
+			"spo2_pct": latest_vitals.spo2_pct,
+			"weight_kg": str(latest_vitals.weight_kg) if latest_vitals.weight_kg is not None else None,
+			"height_cm": str(latest_vitals.height_cm) if latest_vitals.height_cm is not None else None,
+		}
+
+	return JsonResponse(
+		{
+			"appointment": {
+				"appointment_id": appointment.id,
+				"opd_number": appointment.opd_number,
+				"slot_date": str(appointment.slot_date),
+				"doctor_name": appointment.doctor.full_name,
+			},
+			"patient": {
+				"patient_id": patient.id,
+				"opd_number": patient.opd_number,
+				"full_name": f"{patient.first_name} {patient.last_name}",
+				"age": _age_from_dob(patient.dob),
+				"gender": patient.get_gender_display(),
+				"phone": patient.phone,
+				"weight_kg": str(latest_vitals.weight_kg) if latest_vitals and latest_vitals.weight_kg is not None else (str(patient.weight_kg) if patient.weight_kg is not None else None),
+				"known_history": patient.known_history,
+			},
+			"current_consultation": {
+				"consultation_id": current_consultation.id,
+				"status": current_consultation.status,
+				"chief_complaint": current_consultation.chief_complaint,
+				"findings": current_consultation.findings,
+				"diagnosis": current_consultation.diagnosis,
+				"notes": current_consultation.notes,
+				"follow_up_date": str(current_consultation.follow_up_date) if current_consultation.follow_up_date else None,
+			} if current_consultation else None,
+			"vitals": context_vitals,
+			"previous_history": history,
+			"last_prescription": last_prescription_payload,
+		}
+	)
+
+
 @require_POST
 @login_required
 @role_required("Doctor", "Receptionist", "Admin")
@@ -784,6 +1281,38 @@ def prescription_issue(request, consultation_id):
 	)
 
 
+@require_POST
+@login_required
+@role_required("Doctor", "Admin")
+def prescription_update(request, consultation_id):
+	import json
+	try:
+		payload = json.loads(request.body)
+		if not isinstance(payload, dict):
+			raise ValueError
+	except (ValueError, KeyError):
+		return JsonResponse({"error": "invalid_json"}, status=400)
+
+	try:
+		prescription = update_prescription(consultation_id, payload, request.user.username)
+	except Consultation.DoesNotExist:
+		return JsonResponse({"error": "consultation_not_found"}, status=404)
+	except ValueError as exc:
+		return JsonResponse({"error": str(exc)}, status=409)
+
+	return JsonResponse(
+		{
+			"prescription_id": prescription.id,
+			"rx_number": prescription.rx_number,
+			"consultation_id": consultation_id,
+			"items": prescription.items,
+			"issued_by": prescription.issued_by,
+			"issued_at": prescription.issued_at.isoformat(),
+		},
+		status=200,
+	)
+
+
 @require_GET
 @login_required
 @role_required("Doctor", "Pharmacist", "Admin")
@@ -851,6 +1380,50 @@ def prescription_get(request, consultation_id):
 @require_GET
 @login_required
 @role_required("Doctor", "Pharmacist", "Admin")
+def prescription_history_by_patient(request):
+	name = request.GET.get("name", "").strip()
+	phone = request.GET.get("phone", "").strip()
+
+	if not name and not phone:
+		return JsonResponse({"error": "name_or_phone_required"}, status=400)
+
+	queryset = Prescription.objects.select_related("patient", "doctor", "consultation").order_by("-issued_at", "-id")
+
+	if phone:
+		queryset = queryset.filter(patient__phone__icontains=phone)
+
+	if name:
+		name_parts = [part for part in name.split(" ") if part]
+		name_query = Q(patient__first_name__icontains=name) | Q(patient__last_name__icontains=name)
+		if len(name_parts) >= 2:
+			first_name = name_parts[0]
+			last_name = " ".join(name_parts[1:])
+			name_query = name_query | Q(patient__first_name__icontains=first_name, patient__last_name__icontains=last_name)
+		queryset = queryset.filter(name_query)
+
+	items = [
+		{
+			"prescription_id": p.id,
+			"consultation_id": p.consultation_id,
+			"rx_number": p.rx_number,
+			"issued_at": p.issued_at.strftime("%d/%m/%Y %H:%M"),
+			"patient_id": p.patient_id,
+			"patient_name": f"{p.patient.first_name} {p.patient.last_name}",
+			"mobile": p.patient.phone,
+			"doctor_name": p.doctor.full_name,
+			"diagnosis": p.consultation.diagnosis,
+			"item_count": len(p.items or []),
+		}
+		for p in queryset[:200]
+	]
+
+	return JsonResponse({"count": len(items), "items": items})
+
+
+@require_GET
+@login_required
+@role_required("Doctor", "Pharmacist", "Admin")
+@xframe_options_sameorigin
 def prescription_print(request, consultation_id):
 	try:
 		p = Prescription.objects.select_related("patient", "doctor", "consultation").get(consultation_id=consultation_id)
@@ -862,6 +1435,7 @@ def prescription_print(request, consultation_id):
 	consultation = p.consultation
 	context = {
 		"rx_number": p.rx_number,
+		"auto_print": request.GET.get("print") == "1",
 		"issued_at": p.issued_at,
 		"validity_days": p.validity_days,
 		"doctor_name": doctor.full_name,
@@ -913,6 +1487,96 @@ def medical_order_create(request, consultation_id):
 			"status": order.status,
 		},
 		status=201,
+	)
+
+
+@require_POST
+@login_required
+@role_required("Doctor", "Admin")
+def medical_order_create_for_patient(request, patient_id):
+	form = MedicalOrderForm(request.POST)
+	if not form.is_valid():
+		return JsonResponse({"error": "validation_failed", "details": form.errors}, status=400)
+
+	try:
+		order, consultation = create_medical_order_for_patient(
+			patient_id=patient_id,
+			order_type=form.cleaned_data["order_type"],
+			description=form.cleaned_data["description"],
+			actor_username=request.user.username,
+		)
+	except ValueError as exc:
+		if str(exc) in {"finalized_consultation_not_found", "invalid_order_type", "consultation_not_finalized"}:
+			return JsonResponse({"error": str(exc)}, status=409)
+		raise
+
+	return JsonResponse(
+		{
+			"order_id": order.id,
+			"consultation_id": consultation.id,
+			"patient_id": consultation.patient_id,
+			"patient_opd_number": consultation.patient.opd_number,
+			"appointment_opd_number": consultation.appointment.opd_number,
+			"order_type": order.order_type,
+			"description": order.description,
+			"status": order.status,
+		},
+		status=201,
+	)
+
+
+@require_GET
+@login_required
+@role_required("Doctor", "Pharmacist", "Admin")
+def patient_medical_order_context(request, patient_id):
+	try:
+		patient = Patient.objects.get(id=patient_id)
+	except Patient.DoesNotExist:
+		return JsonResponse({"error": "patient_not_found"}, status=404)
+
+	latest_consultation = (
+		Consultation.objects.select_related("doctor", "appointment")
+		.filter(patient_id=patient_id, status="FINALIZED")
+		.order_by("-finalized_at", "-created_at")
+		.first()
+	)
+
+	orders = (
+		MedicalOrder.objects.select_related("consultation", "consultation__doctor")
+		.filter(patient_id=patient_id)
+		.order_by("-created_at", "-id")
+	)
+
+	return JsonResponse(
+		{
+			"patient": {
+				"id": patient.id,
+				"full_name": f"{patient.first_name} {patient.last_name}",
+				"opd_number": patient.opd_number,
+				"phone": patient.phone,
+			},
+			"latest_finalized_consultation": {
+				"consultation_id": latest_consultation.id,
+				"doctor_name": latest_consultation.doctor.full_name,
+				"slot_date": str(latest_consultation.appointment.slot_date),
+				"finalized_at": latest_consultation.finalized_at.strftime("%d/%m/%Y %H:%M") if latest_consultation.finalized_at else None,
+				"diagnosis": latest_consultation.diagnosis,
+				"appointment_opd_number": latest_consultation.appointment.opd_number,
+			} if latest_consultation else None,
+			"orders": [
+				{
+					"order_id": order.id,
+					"consultation_id": order.consultation_id,
+					"order_type": order.order_type,
+					"description": order.description,
+					"status": order.status,
+					"doctor_name": order.consultation.doctor.full_name,
+					"created_by": order.created_by,
+					"created_at": order.created_at.strftime("%d/%m/%Y %H:%M"),
+				}
+				for order in orders[:100]
+			],
+		}
 	)
 
 

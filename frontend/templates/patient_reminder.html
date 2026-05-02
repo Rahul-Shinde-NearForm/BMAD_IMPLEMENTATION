@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% block title %}Tomorrow's Reminder List - OPD Management System{% endblock %}
+{% block page_title %}Tomorrow's Reminder List{% endblock %}
+
+{% block content %}
+<div class="container">
+    <section class="toolbar">
+        <button class="btn-link" onclick="window.location.href = document.referrer || '/'">&#8592; Back</button>
+    </section>
+
+    <section>
+        <h2>Tomorrow's Reminder Call List</h2>
+        <form id="reminderForm" class="form-inline">
+            <label>Doctor Name (optional) <input type="text" name="doctor_name" placeholder="e.g. Dr. Sharma" /></label>
+            <button type="submit">Load Tomorrow List</button>
+            <button type="button" id="downloadReminderPdfBtn">Download PDF</button>
+        </form>
+        <div id="reminderResult"></div>
+    </section>
+
+    <script>
+        document.getElementById("reminderForm").addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const resultEl = document.getElementById("reminderResult");
+            resultEl.className = "result-box";
+            resultEl.textContent = "Loading...";
+
+            const params = new URLSearchParams(new FormData(e.target));
+            const res = await fetch(`/api/reports/tomorrow-patients/?${params.toString()}`, { credentials: "same-origin" });
+            let data = {};
+            try { data = JSON.parse(await res.text()); } catch (_) { }
+
+            if (res.ok && data.patients && data.patients.length > 0) {
+                resultEl.className = "result-box result-success";
+                let html = "<strong>Date: " + (data.date || "-") + "</strong><br>";
+                html += "<strong>Total Appointments: " + data.count + "</strong><br><br>";
+                html += "<table style='width:100%; border-collapse:collapse; font-size:0.95rem; line-height:1.6;'>";
+                html += "<tr style='background:#dce8ff; font-weight:bold;'>";
+                html += "<td style='padding:8px; border:1px solid #c6d7fa;'>#</td>";
+                html += "<td style='padding:8px; border:1px solid #c6d7fa;'>Patient Name</td>";
+                html += "<td style='padding:8px; border:1px solid #c6d7fa;'>OPD Number</td>";
+                html += "<td style='padding:8px; border:1px solid #c6d7fa;'>Mobile</td>";
+                html += "<td style='padding:8px; border:1px solid #c6d7fa;'>Doctor</td>";
+                html += "<td style='padding:8px; border:1px solid #c6d7fa;'>Slot Time</td>";
+                html += "</tr>";
+                data.patients.forEach((p, i) => {
+                    html += "<tr>";
+                    html += "<td style='padding:8px; border:1px solid #c6d7fa;'>" + (i + 1) + "</td>";
+                    html += "<td style='padding:8px; border:1px solid #c6d7fa;'><strong>" + p.patient_name + "</strong></td>";
+                    html += "<td style='padding:8px; border:1px solid #c6d7fa;'>" + (p.opd_number || "-") + "</td>";
+                    html += "<td style='padding:8px; border:1px solid #c6d7fa;'>" + (p.mobile || "-") + "</td>";
+                    html += "<td style='padding:8px; border:1px solid #c6d7fa;'>" + (p.doctor_name || "-") + "</td>";
+                    html += "<td style='padding:8px; border:1px solid #c6d7fa;'>" + (p.slot_time || "-") + "</td>";
+                    html += "</tr>";
+                });
+                html += "</table>";
+                resultEl.innerHTML = html;
+            } else if (res.ok) {
+                resultEl.className = "result-box result-success";
+                resultEl.innerHTML = "<strong>Date: " + (data.date || "-") + "</strong><br><strong>No appointments scheduled for tomorrow.</strong>";
+            } else {
+                resultEl.className = "result-box result-error";
+                resultEl.textContent = "Error loading reminder list. Please try again.";
+            }
+        });
+
+        document.getElementById("downloadReminderPdfBtn").addEventListener("click", () => {
+            const form = document.getElementById("reminderForm");
+            const params = new URLSearchParams(new FormData(form));
+            const query = params.toString();
+            const url = query
+                ? `/api/reports/tomorrow-patients/pdf/?${query}`
+                : "/api/reports/tomorrow-patients/pdf/";
+            window.location.href = url;
+        });
+    </script>
+</div>
+{% endblock %}
