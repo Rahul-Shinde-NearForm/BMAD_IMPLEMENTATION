@@ -42,6 +42,9 @@
                 <label id="regNoField" style="display:none;">Reg No.
                     <input type="text" name="reg_number" id="regNumber" />
                 </label>
+                <label id="suffixField" style="display:none;">Suffix
+                    <input type="text" name="suffix" id="suffix" value="Dr" />
+                </label>
                 <div style="grid-column: 1 / -1;">
                     <button type="submit" class="btn-link">Update Profile</button>
                 </div>
@@ -112,7 +115,10 @@
                 document.getElementById('email').value = data.email || '';
                 document.getElementById('phone').value = data.phone || '';
                 document.getElementById('regNumber').value = data.reg_number || '';
-                document.getElementById('regNoField').style.display = (data.roles || []).includes('Doctor') ? 'block' : 'none';
+                document.getElementById('suffix').value = data.suffix || 'Dr';
+                const isDoctor = (data.roles || []).includes('Doctor');
+                document.getElementById('regNoField').style.display = isDoctor ? 'block' : 'none';
+                document.getElementById('suffixField').style.display = isDoctor ? 'block' : 'none';
             }
         } catch (error) {
             console.error('Error loading profile:', error);
@@ -129,6 +135,7 @@
             email: formData.get('email'),
             phone: formData.get('phone'),
             reg_number: formData.get('reg_number'),
+            suffix: formData.get('suffix') || 'Dr',
         };
 
         try {

@@ -183,7 +183,17 @@ class AppointmentCancelForm(forms.Form):
 class UserCreateForm(forms.Form):
     username = forms.CharField(max_length=150)
     password = forms.CharField(widget=forms.PasswordInput)
-    role = forms.CharField(max_length=50)
+    role = forms.CharField(max_length=50, required=False)
+    first_name = forms.CharField(max_length=150, required=False)
+    last_name = forms.CharField(max_length=150, required=False)
+    email = forms.EmailField(required=False)
+    doctor_full_name = forms.CharField(max_length=150, required=False)
+    doctor_suffix = forms.CharField(max_length=20, required=False)
+    doctor_specialty = forms.CharField(max_length=100, required=False)
+    doctor_phone = forms.CharField(max_length=20, required=False)
+    doctor_reg_number = forms.CharField(max_length=100, required=False)
+    doctor_qualification = forms.CharField(max_length=200, required=False)
+    doctor_daily_patient_capacity = forms.IntegerField(min_value=1, required=False)
 
     def clean_username(self):
         username = self.cleaned_data["username"]

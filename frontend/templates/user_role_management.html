@@ -6,31 +6,75 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>User and Role Management</title>
     <link rel="stylesheet" href="/static/css/app.css" />
+    <style>
+        .doctor-profile-panel {
+            display: none;
+            margin-top: 12px;
+            border: 1px solid #ddd;
+            padding: 12px;
+        }
+
+        .doctor-profile-panel.open {
+            display: block;
+        }
+    </style>
 </head>
 
 <body>
     <main class="container">
-        <h1>User and Role Management</h1>
-        <p>Admin can create users and assign one of: Admin, Doctor, Receptionist, Pharmacist.</p>
+        <h1>Admin Configuration</h1>
+        <p>Configure clinic details, create users, assign roles, and define doctor profile defaults for prescription.
+        </p>
         {% if message %}
         <p class="{% if status == 'success' %}notice-success{% else %}notice-error{% endif %}">{{ message }}</p>
         {% endif %}
 
         <section>
+            <h2>Clinic Details</h2>
+            <form method="post" action="/api/admin/clinic-settings/update/">
+                {% csrf_token %}
+                <p><label>Clinic Name <input type="text" name="clinic_name" value="{{ clinic_name }}"
+                            required /></label></p>
+                <p><label>Clinic Address <textarea name="clinic_address"
+                            rows="3">{{ clinic_address }}</textarea></label></p>
+                <button type="submit">Save Clinic Settings</button>
+            </form>
+        </section>
+
+        <section>
             <h2>Create User</h2>
-            <form method="post" action="/api/users/create/">
+            <form method="post" action="/api/users/create/" id="createUserForm">
                 {% csrf_token %}
                 <p><label>Username <input type="text" name="username" required /></label></p>
                 <p><label>Password <input type="password" name="password" required /></label></p>
+                <p><label>First Name <input type="text" name="first_name" /></label></p>
+                <p><label>Last Name <input type="text" name="last_name" /></label></p>
+                <p><label>Email <input type="email" name="email" /></label></p>
+
                 <p>
-                    <label>Role
-                        <select name="role" required>
-                            {% for role in roles %}
-                            <option value="{{ role }}">{{ role }}</option>
-                            {% endfor %}
-                        </select>
+                    <label>
+                        <input type="checkbox" id="includeDoctorProfileToggle" />
+                        Add doctor profile details
                     </label>
                 </p>
+
+                <fieldset class="doctor-profile-panel" id="doctorProfilePanel">
+                    <legend>Doctor Profile Defaults</legend>
+                    <p style="margin-top:0;">Fill these only if you will assign the Doctor role after creating the user.
+                    </p>
+                    <p><label>Doctor Full Name <input type="text" name="doctor_full_name"
+                                placeholder="Rahul Sharma" /></label></p>
+                    <p><label>Suffix <input type="text" name="doctor_suffix" value="Dr" /></label></p>
+                    <p><label>Phone <input type="text" name="doctor_phone" placeholder="9876543210" /></label></p>
+                    <p><label>Specialty <input type="text" name="doctor_specialty"
+                                placeholder="General Medicine" /></label></p>
+                    <p><label>Registration Number <input type="text" name="doctor_reg_number" /></label></p>
+                    <p><label>Qualification (for prescription) <input type="text" name="doctor_qualification"
+                                placeholder="MBBS, MD" /></label></p>
+                    <p><label>Daily Patient Capacity <input type="number" name="doctor_daily_patient_capacity" min="1"
+                                value="50" /></label></p>
+                </fieldset>
+
                 <button type="submit">Create User</button>
             </form>
         </section>
@@ -83,6 +127,17 @@
 
         <p><button class="btn-link" onclick="window.location.href = document.referrer || '/'">&#8592; Back</button></p>
     </main>
+
+    <script>
+        const doctorProfileToggle = document.getElementById('includeDoctorProfileToggle');
+        const doctorProfilePanel = document.getElementById('doctorProfilePanel');
+
+        if (doctorProfileToggle && doctorProfilePanel) {
+            doctorProfileToggle.addEventListener('change', () => {
+                doctorProfilePanel.classList.toggle('open', doctorProfileToggle.checked);
+            });
+        }
+    </script>
 </body>
 
 </html>

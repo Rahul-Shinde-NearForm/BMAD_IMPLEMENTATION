@@ -6,10 +6,10 @@
 {% block content %}
 <div class="container">
     {% if user.is_authenticated %}
-    <h2>Welcome, {{ user.username }}!</h2>
+    <h2>Welcome, {{ welcome_name }}!</h2>
     <p>Select an option from the left sidebar to get started.</p>
 
-    {% if is_pharmacist or is_admin %}
+    {% if is_pharmacist %}
     <section style="margin-top: 30px;">
         <h3>Pharmacy Workflows</h3>
         <div class="toolbar">

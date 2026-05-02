@@ -1,136 +1,419 @@
 {% extends "base.html" %}
 
-{% block title %}Reception Workbench - OPD Management System{% endblock %}
-{% block page_title %}Reception Workbench{% endblock %}
+{% block title %}Billing - OPD Management System{% endblock %}
+{% block page_title %}Billing{% endblock %}
 
 {% block content %}
-<div class="container">
-    <section class="toolbar">
-        <a class="btn-link" href="/patients/register/">Open Patient Registration Form</a>
-        <a class="btn-link" href="/appointments/book/">Open Appointment Booking Form</a>
-        <button class="btn-link" onclick="window.location.href = document.referrer || '/'">&#8592; Back</button>
-    </section>
+<style>
+    .workbench-container {
+        display: flex;
+        gap: 20px;
+        height: calc(100vh - 120px);
+    }
 
-    <section>
-        <h2>1. Search Patient</h2>
-        <form id="patientSearchForm" class="form-grid">
+    .workbench-left-panel {
+        width: 200px;
+        background-color: #f5f5f5;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        overflow-y: auto;
+        flex-shrink: 0;
+    }
+
+    .workbench-nav-item {
+        display: block;
+        padding: 12px 15px;
+        border-left: 4px solid transparent;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        color: #333;
+        text-decoration: none;
+        border-bottom: 1px solid #eee;
+        font-size: 14px;
+    }
+
+    .workbench-nav-item:hover {
+        background-color: #e0e0e0;
+        border-left-color: #1a4d6d;
+    }
+
+    .workbench-nav-item.active {
+        background-color: #1a4d6d;
+        color: white;
+        border-left-color: #00bcd4;
+    }
+
+    .workbench-right-panel {
+        flex: 1;
+        overflow-y: auto;
+        padding: 20px;
+        background: white;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+    }
+
+    .workbench-section {
+        display: none;
+    }
+
+    .workbench-section.active {
+        display: block;
+    }
+</style>
+
+<div class="workbench-container">
+    <!-- Right Content Panel -->
+    <div class="workbench-right-panel">
+
+        <!-- Billing section -->
+
+        <h3 style="margin-top:0; margin-bottom:6px;">Search Patient</h3>
+        <form id="billingPatientSearchForm" class="form-grid" style="margin-top: 8px;">
             <label>Name <input type="text" name="name" placeholder="First Last" /></label>
             <label>Mobile <input type="text" name="phone" placeholder="10-digit mobile" /></label>
-            <label>Patient OPD Number <input type="text" name="opd_number" placeholder="OPDP-000001" /></label>
-            <div><button type="submit">Search</button></div>
+            <div><button type="submit">Search Patient</button></div>
         </form>
-        <div id="patientSearchResult" class="result-box"></div>
-    </section>
+        <div id="billingPatientSearchResult" class="result-box"></div>
 
-    <section>
-        <h2>2. Repeat Visit OPD History</h2>
-        <form id="opdHistoryForm" class="form-inline">
-            <label>Patient ID <input type="number" name="patient_id" min="1" required /></label>
-            <button type="submit">Get OPD History</button>
+        <h3 style="margin-top:16px; margin-bottom:6px;">Add LAB Bill &amp; Generate Final Invoice</h3>
+        <form id="billingLabInvoiceForm" class="form-grid" style="margin-top: 8px;">
+            <label>Patient OPD Number <input type="text" name="opd_number" placeholder="OPDP-000001" required /></label>
+            <label>Appointment ID (optional) <input type="number" name="appointment_id" min="1" /></label>
+            <div id="billingOpdPaidBanner"
+                style="display:none; grid-column:1/-1; padding:8px 12px; border-radius:4px; font-size:14px;"></div>
+            <label>LAB Bill Amount <input type="number" name="lab_amount" min="0.01" step="0.01" required /></label>
+            <label>LAB Description <input type="text" name="lab_description" value="LAB Charges" /></label>
+            <label>OPD Fee Amount <input type="number" name="opd_fee_amount" min="0.01" step="0.01" value="200"
+                    required /></label>
+            <div><button type="submit">Add LAB Bill and Generate Final Invoice</button></div>
         </form>
-        <pre id="opdHistoryResult" class="result-box"></pre>
-    </section>
+        <pre id="billingLabInvoiceResult" class="result-box"></pre>
+        <div id="billingInvoiceResult" class="result-box"></div>
 
-    <section>
-        <h2>3. Edit Patient Details</h2>
-        <form id="patientEditForm" class="form-grid">
-            <label>Patient ID <input type="number" name="patient_id" min="1" required /></label>
-            <label>First Name <input type="text" name="first_name" required /></label>
-            <label>Last Name <input type="text" name="last_name" required /></label>
-            <label>Age <input type="number" name="age" min="0" max="130" required /></label>
-            <label>Gender
-                <select name="gender" required>
-                    <option value="M">Male</option>
-                    <option value="F">Female</option>
-                    <option value="O">Other</option>
-                </select>
-            </label>
-            <label>Phone <input type="text" name="phone" required /></label>
-            <label>Address <input type="text" name="address" /></label>
-            <div><button type="submit">Update Patient</button></div>
-        </form>
-        <pre id="patientEditResult" class="result-box"></pre>
-    </section>
+    </div> <!-- End workbench-right-panel -->
+</div> <!-- End workbench-container -->
 
-    <section>
-        <h2>4. Tomorrow Reminder Call List</h2>
-        <form id="reminderForm" class="form-inline">
-            <label>Doctor ID (optional) <input type="number" name="doctor_id" min="1" /></label>
-            <button type="submit">Load Tomorrow List</button>
-        </form>
-        <pre id="reminderResult" class="result-box"></pre>
-    </section>
+<script>
+    async function setBillingOpdNumber(opdNumber) {
+        const billingForm = document.getElementById("billingLabInvoiceForm");
+        if (billingForm && billingForm.elements.opd_number) {
+            billingForm.elements.opd_number.value = opdNumber;
+            billingForm.elements.opd_number.focus();
+        }
+        await fetchAndShowOpdPaidStatus(opdNumber);
+    }
 
-    <script>
-        function renderPatientSearchResults(items) {
-            const container = document.getElementById("patientSearchResult");
-            if (!items.length) {
-                container.textContent = "No patients found.";
-                return;
-            }
+    function renderPatientSearchResults(items, targetId = "patientSearchResult", showSelect = false) {
+        const container = document.getElementById(targetId);
+        if (!items.length) {
+            container.textContent = "No patients found.";
+            return;
+        }
 
-            container.innerHTML = items.map((patient) => `
+        container.innerHTML = items.map((patient) => `
                     <div class="patient-result-item">
                         <strong>${patient.full_name}</strong> | Mobile: ${patient.phone} | Patient OPD: ${patient.opd_number || "-"}
+                        ${showSelect ? `<button type="button" class="billing-patient-select" data-opd-number="${patient.opd_number || ""}" style="margin-left:8px;">Select</button>` : ""}
                     </div>
                 `).join("");
-        }
 
-        function getCSRFToken() {
-            const match = document.cookie.match(/csrftoken=([^;]+)/);
-            return match ? match[1] : "";
-        }
-
-        async function doGet(url, targetId) {
-            const res = await fetch(url, { credentials: "same-origin" });
-            const data = await res.json();
-            if (targetId === "patientSearchResult") {
-                renderPatientSearchResults(data.items || []);
-                return;
+        if (targetId === "billingPatientSearchResult") {
+            const firstOpd = items[0] && items[0].opd_number ? items[0].opd_number : "";
+            if (firstOpd) {
+                setBillingOpdNumber(firstOpd);
             }
-            document.getElementById(targetId).textContent = JSON.stringify(data, null, 2);
+        }
+    }
+
+    function getCSRFToken() {
+        const match = document.cookie.match(/csrftoken=([^;]+)/);
+        return match ? match[1] : "";
+    }
+
+    function humanizeApiError(errorCode) {
+        const messages = {
+            appointment_not_found: "Appointment ID not found. Please enter a valid Appointment ID, or leave it empty.",
+            billing_ledger_not_found: "Billing ledger not found. Please verify the ledger details.",
+            invoice_not_found: "Invoice not found. Please verify the invoice ID.",
+        };
+        return messages[errorCode] || `Request failed: ${errorCode}`;
+    }
+
+    function setResultMessage(targetId, data) {
+        const target = document.getElementById(targetId);
+        if (!target) {
+            return;
+        }
+        target.classList.remove("result-success", "result-error");
+
+        if (data && data.error) {
+            target.textContent = humanizeApiError(data.error);
+            target.classList.add("result-error");
+            return;
         }
 
-        async function doPost(url, formData, targetId) {
-            const body = new URLSearchParams(formData);
-            const res = await fetch(url, {
-                method: "POST",
-                headers: {
-                    "X-CSRFToken": getCSRFToken(),
-                    "Content-Type": "application/x-www-form-urlencoded",
-                },
-                body,
+        target.textContent = JSON.stringify(data, null, 2);
+        target.classList.add("result-success");
+    }
+
+    async function doGet(url, targetId) {
+        const res = await fetch(url, { credentials: "same-origin" });
+        const data = await res.json();
+        if (targetId === "patientSearchResult") {
+            renderPatientSearchResults(data.items || [], targetId);
+            return;
+        }
+        if (targetId === "billingPatientSearchResult") {
+            renderPatientSearchResults(data.items || [], targetId, true);
+            return;
+        }
+        setResultMessage(targetId, data);
+    }
+
+    async function doPostJson(url, formData, targetId) {
+        const body = new URLSearchParams(formData);
+        const res = await fetch(url, {
+            method: "POST",
+            headers: {
+                "X-CSRFToken": getCSRFToken(),
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body,
+            credentials: "same-origin",
+        });
+        const data = await res.json();
+        setResultMessage(targetId, data);
+        return data;
+    }
+
+    async function fetchAndShowOpdPaidStatus(opdNumber) {
+        const banner = document.getElementById("billingOpdPaidBanner");
+        if (!opdNumber) {
+            banner.style.display = "none";
+            return null;
+        }
+
+        try {
+            const res = await fetch(`/api/billing/ledger/by-opd/?opd_number=${encodeURIComponent(opdNumber)}`, {
                 credentials: "same-origin",
             });
-            const text = await res.text();
-            document.getElementById(targetId).textContent = text;
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.data) {
+                banner.style.display = "none";
+                return null;
+            }
+
+            const ledger = data.data;
+            const lineItems = ledger.line_items || [];
+            const opdFeeItem = lineItems.find((item) => item.line_type === "OPD_NEW_FEE");
+            const isFinalized = ledger.status === "FINALIZED";
+
+            if (isFinalized && opdFeeItem) {
+                const paidAmt = Number(opdFeeItem.amount || "0");
+                banner.style.display = "block";
+                banner.style.background = "#e6f4ea";
+                banner.style.border = "1px solid #34a853";
+                banner.style.color = "#1a6b2e";
+                banner.innerHTML = `OPD fee already paid: <strong>Rs ${paidAmt.toFixed(2)}</strong>. It will be deducted from final bill.`;
+                return { opdAlreadyPaid: true, paidOpdFeeAmount: paidAmt };
+            }
+
+            banner.style.display = "block";
+            banner.style.background = "#e8f0fe";
+            banner.style.border = "1px solid #4285f4";
+            banner.style.color = "#1a3d82";
+            banner.innerHTML = "No already-paid OPD fee found for deduction.";
+            return { opdAlreadyPaid: false, paidOpdFeeAmount: 0 };
+        } catch (_) {
+            banner.style.display = "none";
+            return null;
+        }
+    }
+
+    document.getElementById("billingPatientSearchForm").addEventListener("submit", (e) => {
+        e.preventDefault();
+        const params = new URLSearchParams(new FormData(e.target));
+        doGet(`/api/patients/search/?${params.toString()}`, "billingPatientSearchResult");
+    });
+
+    document.getElementById("billingPatientSearchResult").addEventListener("click", async (e) => {
+        const button = e.target.closest(".billing-patient-select");
+        if (!button) {
+            return;
         }
 
-        document.getElementById("patientSearchForm").addEventListener("submit", (e) => {
-            e.preventDefault();
-            const params = new URLSearchParams(new FormData(e.target));
-            doGet(`/api/patients/search/?${params.toString()}`, "patientSearchResult");
-        });
+        const opdNumber = button.getAttribute("data-opd-number") || "";
+        await setBillingOpdNumber(opdNumber);
+    });
 
-        document.getElementById("opdHistoryForm").addEventListener("submit", (e) => {
-            e.preventDefault();
-            const patientId = new FormData(e.target).get("patient_id");
-            doGet(`/api/patients/${patientId}/opd-history/`, "opdHistoryResult");
-        });
+    document.getElementById("billingLabInvoiceForm").elements.opd_number.addEventListener("blur", async (e) => {
+        const opdNumber = (e.target.value || "").trim();
+        await fetchAndShowOpdPaidStatus(opdNumber);
+    });
 
-        document.getElementById("patientEditForm").addEventListener("submit", (e) => {
-            e.preventDefault();
-            const fd = new FormData(e.target);
-            const patientId = fd.get("patient_id");
-            fd.delete("patient_id");
-            doPost(`/api/patients/${patientId}/update/`, fd, "patientEditResult");
-        });
+    document.getElementById("billingLabInvoiceForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const form = e.target;
+        const resultId = "billingLabInvoiceResult";
+        const invoiceResultBox = document.getElementById("billingInvoiceResult");
 
-        document.getElementById("reminderForm").addEventListener("submit", (e) => {
-            e.preventDefault();
-            const params = new URLSearchParams(new FormData(e.target));
-            doGet(`/api/reports/tomorrow-patients/?${params.toString()}`, "reminderResult");
+        const opdNumber = (form.elements.opd_number.value || "").trim();
+        const appointmentId = (form.elements.appointment_id.value || "").trim();
+        const labAmount = Number(form.elements.lab_amount.value || "0");
+        const labDescription = (form.elements.lab_description.value || "").trim() || "LAB Charges";
+        const opdFeeAmount = Number(form.elements.opd_fee_amount.value || "0");
+
+        if (!opdNumber) {
+            document.getElementById(resultId).textContent = "Patient OPD Number is required.";
+            return;
+        }
+        if (!(labAmount > 0)) {
+            document.getElementById(resultId).textContent = "Please enter a valid LAB Bill Amount.";
+            return;
+        }
+        if (!(opdFeeAmount > 0)) {
+            document.getElementById(resultId).textContent = "Please enter a valid OPD Fee Amount.";
+            return;
+        }
+
+        document.getElementById(resultId).textContent = "Preparing billing ledger...";
+        invoiceResultBox.textContent = "";
+
+        const preFetched = await fetchAndShowOpdPaidStatus(opdNumber);
+
+        const openPayload = new URLSearchParams({
+            opd_number: opdNumber,
+            appointment_id: appointmentId,
         });
-    </script>
+        const openData = await doPostJson(`/api/billing/ledger/by-opd/create/`, openPayload, resultId);
+        if (!openData || openData.error || !openData.data) {
+            return;
+        }
+
+        const ledgerId = openData.data.ledger_id;
+        const existingItems = openData.data.line_items || [];
+        const existingOpdFeeItem = existingItems.find((item) => item.line_type === "OPD_NEW_FEE");
+
+        document.getElementById(resultId).textContent = "Adding LAB charges...";
+        const addLabPayload = new URLSearchParams({
+            line_type: "MANUAL",
+            amount: String(labAmount),
+            description: labDescription,
+        });
+        const addLabData = await doPostJson(`/api/billing/ledger/${ledgerId}/line-items/`, addLabPayload, resultId);
+        if (!addLabData || addLabData.error) {
+            return;
+        }
+
+        if (!existingOpdFeeItem) {
+            document.getElementById(resultId).textContent = "Adding OPD fee...";
+            const addOpdPayload = new URLSearchParams({
+                line_type: "OPD_NEW_FEE",
+                amount: String(opdFeeAmount),
+                description: "OPD Registration Fee",
+            });
+            const addOpdData = await doPostJson(`/api/billing/ledger/${ledgerId}/line-items/`, addOpdPayload, resultId);
+            if (!addOpdData || addOpdData.error) {
+                return;
+            }
+        }
+
+        const discount = preFetched && preFetched.opdAlreadyPaid ? Number(preFetched.paidOpdFeeAmount || 0) : 0;
+        document.getElementById(resultId).textContent = "Finalizing invoice...";
+        const finalizePayload = new URLSearchParams({
+            tax: "0",
+            discount: String(discount),
+        });
+        const finalizeData = await doPostJson(`/api/billing/ledger/${ledgerId}/finalize/`, finalizePayload, resultId);
+        if (!finalizeData || finalizeData.error || !finalizeData.data) {
+            return;
+        }
+
+        const invoiceId = finalizeData.data.invoice_id;
+        const invoiceRes = await fetch(`/api/billing/invoice/${invoiceId}/`, { credentials: "same-origin" });
+        const invoiceData = await invoiceRes.json().catch(() => ({}));
+        const invoice = invoiceData.data || {};
+        const patient = invoice.patient || {};
+        const totals = invoice.totals || {};
+        const invoiceItems = invoice.line_items || [];
+        const clinicName = invoice.clinic_name || "OPD Clinic";
+
+        invoiceResultBox.className = "result-box result-success";
+        invoiceResultBox.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;">
+                <div>
+                    <strong>Bill No:</strong> ${invoice.bill_number || "-"}<br>
+                    <strong>OPD No:</strong> ${invoice.opd_number || "-"}<br>
+                    <strong>Clinic:</strong> ${clinicName}<br>
+                    <strong>Patient:</strong> ${patient.name || "-"} | ${patient.phone || "-"}
+                </div>
+                <div style="display:flex;gap:8px;">
+                    <a href="/billing/invoice/${invoiceId}/print/?print=1" target="_blank" class="btn-link">Print</a>
+                    <a href="/api/billing/invoice/${invoiceId}/pdf/" class="btn-link">Download</a>
+                </div>
+            </div>
+            <hr style="margin:8px 0;border:none;border-top:1px solid #d9e4f5;">
+            <table style="width:100%;border-collapse:collapse;">
+                <thead><tr style="background:#dce8ff;">
+                    <th style="border:1px solid #c6d7fa;padding:6px;text-align:left;">Description</th>
+                    <th style="border:1px solid #c6d7fa;padding:6px;text-align:left;">Type</th>
+                    <th style="border:1px solid #c6d7fa;padding:6px;text-align:right;">Amount</th>
+                </tr></thead>
+                <tbody>
+                    ${invoiceItems.length ? invoiceItems.map((item) => `
+                        <tr>
+                            <td style="border:1px solid #c6d7fa;padding:6px;">${item.description || "-"}</td>
+                            <td style="border:1px solid #c6d7fa;padding:6px;">${item.line_type || "-"}</td>
+                            <td style="border:1px solid #c6d7fa;padding:6px;text-align:right;">${item.amount}</td>
+                        </tr>
+                    `).join("") : `<tr><td colspan="3" style="border:1px solid #c6d7fa;padding:6px;">No items.</td></tr>`}
+                </tbody>
+            </table>
+            <div style="margin-top:8px;text-align:right;">
+                Subtotal: ${totals.subtotal || "0.00"} | Discount: ${totals.discount || "0.00"} | Tax: ${totals.tax || "0.00"} | <strong>Total: ${totals.total || "0.00"}</strong>
+            </div>
+        `;
+
+        document.getElementById(resultId).textContent = `Invoice generated successfully. Invoice ID: ${invoiceId}`;
+    });
+
+    // Left Panel Navigation
+    document.querySelectorAll(".workbench-nav-item[data-section]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const sectionId = btn.getAttribute("data-section");
+
+            // Hide all sections
+            document.querySelectorAll(".workbench-section").forEach((section) => {
+                section.classList.remove("active");
+            });
+
+            // Remove active class from all nav items
+            document.querySelectorAll(".workbench-nav-item[data-section]").forEach((item) => {
+                item.classList.remove("active");
+            });
+
+            // Show selected section
+            document.getElementById(sectionId).classList.add("active");
+            btn.classList.add("active");
+        });
+    });
+
+    // Open a specific tab when URL contains a hash, e.g. /workbench/reception/#billing
+    const initialSectionId = window.location.hash ? window.location.hash.substring(1) : "";
+    if (initialSectionId) {
+        const targetSection = document.getElementById(initialSectionId);
+        const targetButton = document.querySelector(`.workbench-nav-item[data-section="${initialSectionId}"]`);
+        if (targetSection && targetButton) {
+            document.querySelectorAll(".workbench-section").forEach((section) => {
+                section.classList.remove("active");
+            });
+            document.querySelectorAll(".workbench-nav-item[data-section]").forEach((item) => {
+                item.classList.remove("active");
+            });
+            targetSection.classList.add("active");
+            targetButton.classList.add("active");
+        }
+    }
+</script>
 </div>
 {% endblock %}

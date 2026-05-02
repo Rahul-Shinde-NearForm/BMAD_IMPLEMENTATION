@@ -3,14 +3,20 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from datetime import datetime, timedelta
+from decimal import Decimal
 
 from .models import (
     Appointment,
     AlertEvent,
     AppointmentEvent,
     BillingHandoff,
+    BillingInvoice,
+    BillingLedger,
+    BillingLineItem,
+    BillingAuditEvent,
     BillingRetryLog,
     Consultation,
+    ClinicSettings,
     ConsultationAmendment,
     Doctor,
     MedicalOrder,
@@ -43,9 +49,10 @@ APPOINTMENT_TRANSITIONS = {
 }
 
 QUEUE_TRANSITIONS = {
-    "WAITING": {"SKIPPED", "NO_SHOW"},
-    "CALLED": {"SKIPPED", "NO_SHOW"},
-    "SKIPPED": {"CALLED", "NO_SHOW"},
+    "WAITING": {"SKIPPED", "NO_SHOW", "COMPLETED", "CALLED"},
+    "CALLED": {"SKIPPED", "NO_SHOW", "COMPLETED"},
+    "SKIPPED": {"CALLED", "NO_SHOW", "COMPLETED"},
+    "COMPLETED": set(),
     "NO_SHOW": set(),
 }
 
@@ -390,7 +397,37 @@ def complete_appointment(appointment, actor_username):
         reason="doctor_completed_visit",
         actor_username=actor_username,
     )
+
+    queue_item = QueueItem.objects.select_for_update().filter(appointment=appointment).first()
+    if queue_item and queue_item.status != "COMPLETED":
+        previous_queue_status = queue_item.status
+        queue_item.status = "COMPLETED"
+        queue_item.save(update_fields=["status", "updated_at"])
+        _create_queue_event(queue_item, "COMPLETE", previous_queue_status, "COMPLETED", actor_username)
+
     return appointment
+
+
+@transaction.atomic
+def queue_mark_called_for_appointment(appointment_id, actor_username):
+    appointment = Appointment.objects.select_related("doctor").get(id=appointment_id)
+    sync_queue_for_day(appointment.doctor_id, appointment.slot_date)
+
+    queue_item = QueueItem.objects.select_for_update().filter(appointment_id=appointment_id).first()
+    if queue_item is None:
+        raise QueueItem.DoesNotExist()
+
+    if queue_item.status == "CALLED":
+        return queue_item
+    if queue_item.status in {"COMPLETED", "NO_SHOW"}:
+        raise ValueError("invalid_transition")
+
+    previous = queue_item.status
+    queue_item.status = "CALLED"
+    queue_item.called_at = timezone.now()
+    queue_item.save(update_fields=["status", "called_at", "updated_at"])
+    _create_queue_event(queue_item, "RECALL", previous, "CALLED", actor_username)
+    return queue_item
 
 
 def patient_opd_history(patient_id, limit=20):
@@ -702,14 +739,22 @@ def issue_prescription(consultation_id, payload, actor_username):
         except Exception:
             weight_kg = None
 
+    clinic_name = payload.get("clinic_name")
+    if not clinic_name:
+        clinic_name = ClinicSettings.get_solo().clinic_name
+
+    clinic_address = payload.get("clinic_address")
+    if not clinic_address:
+        clinic_address = ClinicSettings.get_solo().clinic_address
+
     prescription = Prescription.objects.create(
         consultation=consultation,
         patient_id=consultation.patient_id,
         doctor_id=consultation.doctor_id,
-        doctor_qualification=payload.get("doctor_qualification", ""),
+        doctor_qualification=payload.get("doctor_qualification") or consultation.doctor.qualification,
         doctor_reg_number=payload.get("doctor_reg_number") or consultation.doctor.reg_number,
-        clinic_name=payload.get("clinic_name", ""),
-        clinic_address=payload.get("clinic_address", ""),
+        clinic_name=clinic_name,
+        clinic_address=clinic_address,
         items=items,
         patient_age_at_issue=age,
         patient_weight_kg=weight_kg,
@@ -840,7 +885,7 @@ def _build_billing_payload(consultation: Consultation) -> dict:
         "patient_age": age,
         "patient_gender": gender_map.get(patient.gender, patient.gender),
         "patient_phone": patient.phone,
-        "doctor_name": doctor.full_name,
+        "doctor_name": doctor.display_name,
         "doctor_specialty": doctor.specialty,
         "visit_type": consultation.appointment.visit_type,
         "diagnosis": consultation.diagnosis or "",
@@ -921,6 +966,235 @@ def list_billing_handoffs(status: str = None, date_from: str = None, date_to: st
     if date_to:
         qs = qs.filter(created_at__date__lte=date_to)
     return list(qs)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 1 Billing foundation (BM-1.1 to BM-1.4)
+# ---------------------------------------------------------------------------
+
+def _resolve_appointment_for_opd(opd_number: str, appointment_id=None):
+    normalized_opd = (opd_number or "").strip()
+
+    if appointment_id:
+        appointment = Appointment.objects.select_related("patient", "doctor").get(id=appointment_id)
+        valid_opd_numbers = {
+            (appointment.opd_number or "").strip(),
+            (appointment.patient.opd_number or "").strip(),
+        }
+        if normalized_opd not in valid_opd_numbers:
+            raise ValueError("opd_number_mismatch")
+        return appointment
+
+    appointment = (
+        Appointment.objects
+        .select_related("patient", "doctor")
+        .filter(opd_number=normalized_opd)
+        .first()
+    )
+    if appointment:
+        return appointment
+
+    patient = Patient.objects.filter(opd_number=normalized_opd).first()
+    if patient is None:
+        return None
+
+    return (
+        Appointment.objects
+        .select_related("patient", "doctor")
+        .filter(patient_id=patient.id)
+        .exclude(status="CANCELLED")
+        .order_by("-created_at")
+        .first()
+    )
+
+
+@transaction.atomic
+def create_or_get_active_billing_ledger(opd_number, actor_username, appointment_id=None):
+    if not opd_number:
+        raise ValueError("opd_number_required")
+
+    existing = BillingLedger.objects.select_for_update().filter(opd_number=opd_number).first()
+    if existing:
+        return existing, False
+
+    appointment = _resolve_appointment_for_opd(opd_number, appointment_id=appointment_id)
+    if appointment is None:
+        raise ValueError("appointment_not_found")
+
+    ledger = BillingLedger.objects.create(
+        opd_number=opd_number,
+        appointment=appointment,
+        patient=appointment.patient,
+        doctor=appointment.doctor,
+        visit_date=appointment.slot_date,
+        visit_type=appointment.visit_type,
+        status="OPEN",
+        created_by=actor_username,
+        updated_by=actor_username,
+    )
+    BillingAuditEvent.objects.create(
+        ledger=ledger,
+        action="LEDGER_CREATED",
+        actor_username=actor_username,
+        payload={"opd_number": opd_number, "appointment_id": appointment.id},
+    )
+    return ledger, True
+
+
+@transaction.atomic
+def add_billing_line_item(ledger_id, line_type, amount, actor_username, description="", source_order_id=""):
+    ledger = BillingLedger.objects.select_for_update().get(id=ledger_id)
+
+    if line_type not in {"OPD_NEW_FEE", "OPD_REPEAT_FEE", "MANUAL"}:
+        raise ValueError("invalid_line_type")
+
+    if ledger.status == "FINALIZED":
+        if line_type != "MANUAL":
+            raise ValueError("ledger_finalized")
+        ledger.status = "OPEN"
+        ledger.finalized_by = ""
+        ledger.finalized_at = None
+        ledger.updated_by = actor_username
+        ledger.save(update_fields=["status", "finalized_by", "finalized_at", "updated_by", "updated_at"])
+        BillingAuditEvent.objects.create(
+            ledger=ledger,
+            action="LEDGER_REOPENED",
+            actor_username=actor_username,
+            payload={"reason": "additional_manual_charges"},
+        )
+
+    amount_decimal = Decimal(str(amount))
+    if amount_decimal <= Decimal("0"):
+        raise ValueError("invalid_amount")
+
+    # Keep one mandatory OPD new fee line by default to avoid accidental duplicates.
+    if line_type == "OPD_NEW_FEE":
+        duplicate = BillingLineItem.objects.filter(ledger=ledger, line_type="OPD_NEW_FEE").first()
+        if duplicate:
+            raise ValueError("opd_new_fee_already_present")
+
+    item = BillingLineItem.objects.create(
+        ledger=ledger,
+        line_type=line_type,
+        description=description or "",
+        amount=amount_decimal,
+        source_order_id=source_order_id or "",
+        created_by=actor_username,
+    )
+    ledger.updated_by = actor_username
+    ledger.save(update_fields=["updated_by", "updated_at"])
+    return item
+
+
+@transaction.atomic
+def set_repeat_fee_decision(ledger_id, decision, actor_username, reason="", amount=None):
+    ledger = BillingLedger.objects.select_for_update().get(id=ledger_id)
+    if ledger.status == "FINALIZED":
+        raise ValueError("ledger_finalized")
+
+    if decision not in {"YES", "NO"}:
+        raise ValueError("invalid_repeat_fee_decision")
+
+    if decision == "NO":
+        if not reason.strip():
+            raise ValueError("repeat_fee_reason_required")
+        BillingLineItem.objects.filter(ledger=ledger, line_type="OPD_REPEAT_FEE").delete()
+        ledger.repeat_fee_decision = "NO"
+        ledger.repeat_fee_reason = reason.strip()
+    else:
+        if amount is None:
+            raise ValueError("repeat_fee_amount_required")
+        amount_decimal = Decimal(str(amount))
+        if amount_decimal <= Decimal("0"):
+            raise ValueError("invalid_amount")
+        repeat_item = BillingLineItem.objects.filter(ledger=ledger, line_type="OPD_REPEAT_FEE").first()
+        if repeat_item:
+            repeat_item.amount = amount_decimal
+            repeat_item.description = "Repeat OPD consultation fee"
+            repeat_item.created_by = actor_username
+            repeat_item.save(update_fields=["amount", "description", "created_by"])
+        else:
+            BillingLineItem.objects.create(
+                ledger=ledger,
+                line_type="OPD_REPEAT_FEE",
+                description="Repeat OPD consultation fee",
+                amount=amount_decimal,
+                created_by=actor_username,
+            )
+        ledger.repeat_fee_decision = "YES"
+        ledger.repeat_fee_reason = ""
+
+    ledger.updated_by = actor_username
+    ledger.save(update_fields=["repeat_fee_decision", "repeat_fee_reason", "updated_by", "updated_at"])
+    BillingAuditEvent.objects.create(
+        ledger=ledger,
+        action="REPEAT_FEE_DECISION",
+        actor_username=actor_username,
+        payload={"decision": decision, "reason": reason or "", "amount": str(amount) if amount is not None else None},
+    )
+    return ledger
+
+
+def _billing_subtotal(ledger):
+    total = Decimal("0")
+    for line in ledger.line_items.all():
+        total += Decimal(str(line.amount))
+    return total
+
+
+@transaction.atomic
+def finalize_billing_ledger(ledger_id, actor_username, tax=0, discount=0):
+    ledger = BillingLedger.objects.select_for_update().get(id=ledger_id)
+    if ledger.status == "FINALIZED":
+        raise ValueError("already_finalized")
+
+    if ledger.visit_type == "NEW":
+        has_new_fee = BillingLineItem.objects.filter(ledger=ledger, line_type="OPD_NEW_FEE").exists()
+        if not has_new_fee:
+            raise ValueError("mandatory_new_opd_fee_missing")
+
+    if ledger.visit_type == "FOLLOW_UP" and ledger.repeat_fee_decision == "NO" and not ledger.repeat_fee_reason.strip():
+        raise ValueError("repeat_fee_reason_required")
+
+    subtotal = _billing_subtotal(ledger)
+    tax_decimal = Decimal(str(tax or 0))
+    discount_decimal = Decimal(str(discount or 0))
+    if tax_decimal < 0 or discount_decimal < 0:
+        raise ValueError("invalid_tax_or_discount")
+
+    total = subtotal + tax_decimal - discount_decimal
+    if total < 0:
+        raise ValueError("invalid_total")
+
+    invoice, _ = BillingInvoice.objects.get_or_create(
+        ledger=ledger,
+        defaults={
+            "subtotal": subtotal,
+            "discount": discount_decimal,
+            "tax": tax_decimal,
+            "total": total,
+            "created_by": actor_username,
+        },
+    )
+    if invoice.total != total or invoice.subtotal != subtotal or invoice.tax != tax_decimal or invoice.discount != discount_decimal:
+        invoice.subtotal = subtotal
+        invoice.discount = discount_decimal
+        invoice.tax = tax_decimal
+        invoice.total = total
+        invoice.save(update_fields=["subtotal", "discount", "tax", "total"])
+
+    ledger.status = "FINALIZED"
+    ledger.finalized_by = actor_username
+    ledger.finalized_at = timezone.now()
+    ledger.updated_by = actor_username
+    ledger.save(update_fields=["status", "finalized_by", "finalized_at", "updated_by", "updated_at"])
+    BillingAuditEvent.objects.create(
+        ledger=ledger,
+        action="LEDGER_FINALIZED",
+        actor_username=actor_username,
+        payload={"invoice_id": invoice.id, "bill_number": invoice.bill_number},
+    )
+    return ledger, invoice
 
 
 # ---------------------------------------------------------------------------

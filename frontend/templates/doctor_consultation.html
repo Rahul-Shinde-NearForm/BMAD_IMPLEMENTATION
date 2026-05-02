@@ -19,8 +19,8 @@
                 <textarea id="knownHistoryInput" rows="2" placeholder="Add known history if not captured"></textarea>
             </label>
             <label style="grid-column: 1 / -1; margin-top:0.5rem;"><strong>Vitals</strong></label>
-            <label>Temp (C)
-                <input type="number" id="temperatureInput" step="0.1" min="25" max="45" placeholder="e.g. 98.6" />
+            <label>Temp (deg)
+                <input type="number" id="temperatureInput" step="0.1" placeholder="e.g. 98.6" />
             </label>
             <label>Pulse (bpm)
                 <input type="number" id="pulseInput" min="1" max="300" placeholder="e.g. 72" />
@@ -82,7 +82,6 @@
             <tbody id="medicineTableBody"></tbody>
         </table>
         <div style="display:flex; gap:0.75rem; margin-top:0.75rem; align-items:center;">
-            <button type="button" id="issuePrescriptionBtn">Issue Prescription</button>
             <button type="button" id="editPrescriptionBtn">Edit Prescription</button>
             <button type="button" id="savePrescriptionChangesBtn" style="display:none;">Save Prescription
                 Changes</button>
@@ -104,6 +103,9 @@
                 <input type="text" name="advise_labs" id="adviseLabsInput" form="consultationDraftForm"
                     list="adviseLabsOptions" placeholder="e.g. CBC, Chest X-ray" />
             </label>
+            <div style="display:flex; justify-content:flex-start;">
+                <button type="button" id="issuePrescriptionBtn">Issue Prescription</button>
+            </div>
             <datalist id="adviseLabsOptions">
                 <option value="CBC"></option>
                 <option value="ESR"></option>
@@ -147,6 +149,8 @@
     }
 
     const appointmentId = new URLSearchParams(window.location.search).get("appointment_id");
+    let currentDoctorId = null;
+    let currentSlotDate = null;
     let consultationId = null;
     let patientId = null;
     let consultationBaseDate = new Date();
@@ -564,6 +568,8 @@
         contextEl.className = "result-box result-success";
         contextEl.innerHTML = `<strong>Patient:</strong> ${escapeHtml(data.patient.full_name)} | <strong>OPD No:</strong> ${escapeHtml(data.patient.opd_number)} | <strong>Age:</strong> ${escapeHtml(data.patient.age)} | <strong>Weight:</strong> ${escapeHtml(data.patient.weight_kg)} kg`;
         patientId = data.patient && data.patient.patient_id ? data.patient.patient_id : null;
+        currentDoctorId = data.appointment && data.appointment.doctor_id ? data.appointment.doctor_id : null;
+        currentSlotDate = data.appointment && data.appointment.slot_date ? data.appointment.slot_date : null;
         consultationBaseDate = data.appointment && data.appointment.slot_date
             ? new Date(`${data.appointment.slot_date}T00:00:00`)
             : new Date();
@@ -812,8 +818,35 @@
         }
 
         if (res.ok) {
+            const completionRes = await fetch(`/api/appointments/${appointmentId}/complete/`, {
+                method: "POST",
+                headers: { "X-CSRFToken": getCSRFToken(), "Content-Type": "application/x-www-form-urlencoded" },
+                credentials: "same-origin",
+            });
+
+            let queueMessage = "";
+            if (currentDoctorId && currentSlotDate) {
+                const queueBody = new URLSearchParams({
+                    doctor_id: String(currentDoctorId),
+                    slot_date: currentSlotDate,
+                });
+                const queueRes = await fetch("/api/queue/call-next/", {
+                    method: "POST",
+                    headers: { "X-CSRFToken": getCSRFToken(), "Content-Type": "application/x-www-form-urlencoded" },
+                    body: queueBody,
+                    credentials: "same-origin",
+                });
+                const queueData = await queueRes.json().catch(() => ({}));
+                if (queueRes.ok && queueData.event) {
+                    queueMessage = ` Next patient called: Token ${queueData.event.token_number}, Appointment ID ${queueData.event.appointment_id}.`;
+                } else if (queueData.error === "queue_empty") {
+                    queueMessage = " Queue is empty for now.";
+                }
+            }
+
+            const completionSuffix = completionRes.ok ? "" : " Appointment status was already completed.";
             resultEl.className = "result-box result-success";
-            resultEl.textContent = `Prescription issued successfully. Rx: ${data.rx_number}`;
+            resultEl.textContent = `Prescription issued successfully. Rx: ${data.rx_number}.${queueMessage}${completionSuffix}`;
             prescriptionExists = true;
             await loadExistingPrescription();
         } else {

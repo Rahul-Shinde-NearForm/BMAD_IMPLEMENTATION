@@ -57,17 +57,34 @@ class SearchAuditLog(models.Model):
 
 class Doctor(models.Model):
 	user = models.OneToOneField("auth.User", on_delete=models.CASCADE, related_name="doctor_profile", blank=True, null=True)
+	suffix = models.CharField(max_length=20, blank=True, default="Dr")
 	full_name = models.CharField(max_length=150)
 	specialty = models.CharField(max_length=100)
+	phone = models.CharField(max_length=20, blank=True, default="")
 	reg_number = models.CharField(max_length=100, blank=True, default="")
+	qualification = models.CharField(max_length=200, blank=True, default="")
 	daily_patient_capacity = models.PositiveIntegerField(default=50)
 	created_at = models.DateTimeField(auto_now_add=True)
 
 	class Meta:
 		ordering = ["full_name"]
 
+	@property
+	def display_name(self):
+		name = (self.full_name or "").strip()
+		suffix = (self.suffix or "").strip()
+		if not suffix:
+			return name
+		if not name:
+			return suffix
+		normalized_name = name.lower().replace(".", "")
+		normalized_suffix = suffix.lower().replace(".", "")
+		if normalized_name == normalized_suffix or normalized_name.startswith(f"{normalized_suffix} "):
+			return name
+		return f"{suffix} {name}"
+
 	def __str__(self):
-		return self.full_name
+		return self.display_name
 
 
 class DoctorScheduleTemplate(models.Model):
@@ -299,6 +316,7 @@ class QueueItem(models.Model):
 		("WAITING", "Waiting"),
 		("CALLED", "Called"),
 		("SKIPPED", "Skipped"),
+		("COMPLETED", "Completed"),
 		("NO_SHOW", "No Show"),
 	]
 
@@ -321,6 +339,7 @@ class QueueEvent(models.Model):
 		("CALL_NEXT", "Call Next"),
 		("SKIP", "Skip"),
 		("RECALL", "Recall"),
+		("COMPLETE", "Complete"),
 		("NO_SHOW", "No Show"),
 	]
 
@@ -369,6 +388,94 @@ class BillingRetryLog(models.Model):
 
 	class Meta:
 		ordering = ["attempted_at"]
+
+
+class BillingLedger(models.Model):
+	STATUS_CHOICES = [
+		("OPEN", "Open"),
+		("FINALIZED", "Finalized"),
+	]
+	REPEAT_FEE_DECISION_CHOICES = [
+		("PENDING", "Pending"),
+		("YES", "Yes"),
+		("NO", "No"),
+	]
+
+	opd_number = models.CharField(max_length=30, unique=True)
+	appointment = models.ForeignKey(Appointment, on_delete=models.SET_NULL, null=True, blank=True, related_name="billing_ledgers")
+	patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name="billing_ledgers")
+	doctor = models.ForeignKey(Doctor, on_delete=models.CASCADE, related_name="billing_ledgers")
+	visit_date = models.DateField()
+	visit_type = models.CharField(max_length=20, choices=Appointment.VISIT_TYPE_CHOICES, default="NEW")
+	status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="OPEN")
+	repeat_fee_decision = models.CharField(max_length=20, choices=REPEAT_FEE_DECISION_CHOICES, default="PENDING")
+	repeat_fee_reason = models.CharField(max_length=255, blank=True, default="")
+	finalized_by = models.CharField(max_length=150, blank=True, default="")
+	finalized_at = models.DateTimeField(null=True, blank=True)
+	created_by = models.CharField(max_length=150)
+	updated_by = models.CharField(max_length=150)
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	class Meta:
+		ordering = ["-created_at"]
+		indexes = [
+			models.Index(fields=["status"]),
+		]
+
+
+class BillingLineItem(models.Model):
+	LINE_TYPE_CHOICES = [
+		("OPD_NEW_FEE", "OPD New Fee"),
+		("OPD_REPEAT_FEE", "OPD Repeat Fee"),
+		("MANUAL", "Manual"),
+	]
+
+	ledger = models.ForeignKey(BillingLedger, on_delete=models.CASCADE, related_name="line_items")
+	line_type = models.CharField(max_length=30, choices=LINE_TYPE_CHOICES)
+	description = models.CharField(max_length=255, blank=True, default="")
+	amount = models.DecimalField(max_digits=10, decimal_places=2)
+	source_order_id = models.CharField(max_length=50, blank=True, default="")
+	created_by = models.CharField(max_length=150)
+	created_at = models.DateTimeField(auto_now_add=True)
+
+	class Meta:
+		ordering = ["created_at"]
+		indexes = [
+			models.Index(fields=["ledger", "line_type"]),
+		]
+
+
+class BillingInvoice(models.Model):
+	ledger = models.OneToOneField(BillingLedger, on_delete=models.CASCADE, related_name="invoice")
+	bill_number = models.CharField(max_length=30, unique=True, blank=True, default="")
+	subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+	discount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+	tax = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+	total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+	created_by = models.CharField(max_length=150)
+	created_at = models.DateTimeField(auto_now_add=True)
+
+	class Meta:
+		ordering = ["-created_at"]
+
+	def save(self, *args, **kwargs):
+		new_record = self.pk is None
+		super().save(*args, **kwargs)
+		if new_record and not self.bill_number:
+			self.bill_number = f"BILL-{self.pk:08d}"
+			super().save(update_fields=["bill_number"])
+
+
+class BillingAuditEvent(models.Model):
+	ledger = models.ForeignKey(BillingLedger, on_delete=models.CASCADE, related_name="audit_events")
+	action = models.CharField(max_length=50)
+	actor_username = models.CharField(max_length=150)
+	payload = models.JSONField(default=dict)
+	created_at = models.DateTimeField(auto_now_add=True)
+
+	class Meta:
+		ordering = ["created_at"]
 
 
 class ReportExport(models.Model):
@@ -463,3 +570,27 @@ class UserProfile(models.Model):
 
 	def __str__(self):
 		return f"Profile of {self.user.username}"
+
+
+class ClinicSettings(models.Model):
+	clinic_name = models.CharField(max_length=255, default="OPD Clinic")
+	clinic_address = models.TextField(blank=True, default="")
+	updated_at = models.DateTimeField(auto_now=True)
+
+	@classmethod
+	def get_solo(cls):
+		obj, _ = cls.objects.get_or_create(
+			id=1,
+			defaults={
+				"clinic_name": "OPD Clinic",
+				"clinic_address": "",
+			},
+		)
+		return obj
+
+	def save(self, *args, **kwargs):
+		self.id = 1
+		super().save(*args, **kwargs)
+
+	def __str__(self):
+		return self.clinic_name

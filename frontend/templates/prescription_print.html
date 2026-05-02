@@ -59,9 +59,9 @@
 <body>
     <div class="header">
         <h2 style="margin: 0;">{{ clinic_name|default:"OPD Clinic" }}</h2>
-        <div>{{ clinic_address }}</div>
+        <div>{{ clinic_address|default:"" }}</div>
         <div class="row">
-            <div>Dr. {{ doctor_name }} ({{ doctor_specialty }})</div>
+            <div>{{ doctor_name }} ({{ doctor_specialty }})</div>
             <div>&nbsp;</div>
         </div>
         <div class="row small">
@@ -142,7 +142,7 @@
 
     <div class="section" style="margin-top: 28px; width: 260px; margin-left: auto; text-align: center;">
         <div style="height: 40px;"></div>
-        <div style="border-top: 1px solid #222; padding-top: 6px; font-size: 13px;">Dr. {{ doctor_name }}</div>
+        <div style="border-top: 1px solid #222; padding-top: 6px; font-size: 13px;">{{ doctor_name }}</div>
     </div>
 
     <div class="no-print" style="margin-top: 16px;">

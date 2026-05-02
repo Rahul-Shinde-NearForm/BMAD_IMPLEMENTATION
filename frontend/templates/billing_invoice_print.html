@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Invoice {{ bill_number }}</title>
+    <style>
+        body {
+            font-family: "Times New Roman", serif;
+            margin: 20px;
+            color: #111;
+        }
+
+        .header {
+            border-bottom: 2px solid #222;
+            padding-bottom: 8px;
+            margin-bottom: 12px;
+        }
+
+        .row {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .small {
+            font-size: 12px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        th,
+        td {
+            border: 1px solid #444;
+            padding: 6px;
+            font-size: 13px;
+            text-align: left;
+        }
+
+        th {
+            background: #f2f2f2;
+        }
+
+        .section {
+            margin-top: 12px;
+        }
+
+        .totals {
+            margin-top: 12px;
+            margin-left: auto;
+            width: 280px;
+        }
+
+        .totals td {
+            font-size: 14px;
+        }
+
+        .total-row td {
+            font-weight: bold;
+        }
+
+        @media print {
+            .no-print {
+                display: none;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <h2 style="margin: 0;">{{ clinic_name|default:"OPD Clinic" }}</h2>
+        <div style="font-size: 12px; margin-top: 3px;">{{ clinic_address|default:"" }}</div>
+        <div style="margin-top: 4px; font-weight: 600;">OPD Billing Invoice</div>
+        <div class="row small">
+            <div>Bill No: {{ bill_number }}</div>
+            <div>Date: {{ created_at|date:"d/m/Y H:i" }}</div>
+        </div>
+        <div class="row small">
+            <div>OPD No: {{ opd_number }}</div>
+            <div>Visit Date: {{ visit_date|date:"d/m/Y" }}</div>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="row">
+            <div><strong>Patient:</strong> {{ patient_name }}</div>
+        </div>
+        <div class="row">
+            <div><strong>Mobile:</strong> {{ patient_phone|default:"-" }}</div>
+            <div><strong>Doctor:</strong> {{ doctor_name }} ({{ doctor_specialty }})</div>
+        </div>
+    </div>
+
+    <div class="section">
+        <strong>Charges</strong>
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Type</th>
+                    <th>Description</th>
+                    <th>Amount</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in line_items %}
+                <tr>
+                    <td>{{ forloop.counter }}</td>
+                    <td>{{ item.get_line_type_display }}</td>
+                    <td>{{ item.description|default:"-" }}</td>
+                    <td>{{ item.amount }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="4">No line items available.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <table class="totals">
+        <tr>
+            <td>Subtotal</td>
+            <td>{{ subtotal }}</td>
+        </tr>
+        <tr>
+            <td>Discount</td>
+            <td>{{ discount }}</td>
+        </tr>
+        <tr>
+            <td>Tax</td>
+            <td>{{ tax }}</td>
+        </tr>
+        <tr class="total-row">
+            <td>Total</td>
+            <td>{{ total }}</td>
+        </tr>
+    </table>
+
+    <div class="no-print" style="margin-top: 16px;">
+        <button onclick="window.print()">Print</button>
+    </div>
+
+    {% if auto_print %}
+    <script>
+        window.addEventListener("load", () => {
+            window.print();
+        });
+    </script>
+    {% endif %}
+</body>
+
+</html>

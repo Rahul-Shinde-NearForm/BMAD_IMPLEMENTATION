@@ -8,9 +8,13 @@
     <style>
         .registration-layout {
             display: grid;
-            grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
+            grid-template-columns: minmax(280px, 1fr) minmax(280px, 1fr) minmax(280px, 1fr);
             gap: 1.5rem;
             align-items: start;
+        }
+
+        .registration-form-grid {
+            display: contents;
         }
 
         .registration-panel {
@@ -28,6 +32,12 @@
             margin-top: 1rem;
         }
 
+        @media (max-width: 1200px) {
+            .registration-layout {
+                grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
+            }
+        }
+
         @media (max-width: 900px) {
             .registration-layout {
                 grid-template-columns: 1fr;
@@ -41,9 +51,9 @@
 
     <h1>Patient Registration</h1>
     <div id="patientRegisterMessage" class="result-box" style="display:none;"></div>
-    <form id="patientRegisterForm" method="post" action="/api/patients/register/">
-        {% csrf_token %}
-        <div class="registration-layout">
+    <div class="registration-layout">
+        <form id="patientRegisterForm" method="post" action="/api/patients/register/" class="registration-form-grid">
+            {% csrf_token %}
             <section class="registration-panel">
                 <h2>Patient Details</h2>
                 <p><label>First Name <input type="text" name="first_name" required /></label></p>
@@ -95,13 +105,100 @@
                 </div>
                 <button type="submit" class="appointment-submit">Register and Book Appointment</button>
             </section>
-        </div>
-    </form>
+        </form>
+
+        <section class="registration-panel">
+            <h2>Billing Option</h2>
+            <form id="patientBillingForm" class="form-grid">
+                <label>Patient OPD Number <input type="text" name="opd_number" placeholder="OPDP-000001"
+                        required /></label>
+                <label>Appointment ID (optional) <input type="number" name="appointment_id" min="1" /></label>
+                <label>OPD Fee Amount <input type="number" name="amount" min="0.01" step="0.01" required /></label>
+                <label>Description <input type="text" name="description" value="OPD Registration Fee" /></label>
+                <div><button type="button" id="patientBillingGetInvoiceBtn">Get Invoice</button></div>
+            </form>
+            <pre id="patientBillingResult" class="result-box"></pre>
+            <div id="patientBillingInvoiceResult" class="result-box"></div>
+        </section>
+    </div>
 
     <script>
         function getCSRFToken() {
             const match = document.cookie.match(/csrftoken=([^;]+)/);
             return match ? match[1] : "";
+        }
+
+        function escapeHtml(value) {
+            if (value === null || value === undefined) return "-";
+            return String(value)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/\"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        function renderInvoiceCard(invoicePayload) {
+            const lineItems = invoicePayload.line_items || [];
+            const totals = invoicePayload.totals || {};
+            const patient = invoicePayload.patient || {};
+            const doctor = invoicePayload.doctor || {};
+            const clinicName = invoicePayload.clinic_name || "OPD Clinic";
+            const printUrl = invoicePayload.print_url || "";
+            const pdfUrl = invoicePayload.pdf_download_url || "";
+
+            let html = "<div style='display:flex; justify-content:space-between; gap:1rem; align-items:flex-start; flex-wrap:wrap;'>";
+            html += "<div>";
+            html += `<strong>Bill No:</strong> ${escapeHtml(invoicePayload.bill_number)}<br>`;
+            html += `<strong>Invoice ID:</strong> ${escapeHtml(invoicePayload.invoice_id)}<br>`;
+            html += `<strong>OPD Number:</strong> ${escapeHtml(invoicePayload.opd_number)}<br>`;
+            html += `<strong>Visit Date:</strong> ${escapeHtml(invoicePayload.visit_date)}<br>`;
+            html += `<strong>Clinic:</strong> ${escapeHtml(clinicName)}<br>`;
+            html += `<strong>Created At:</strong> ${escapeHtml(invoicePayload.created_at)}`;
+            html += "</div>";
+            html += "<div style='display:flex; gap:0.5rem; align-items:center;'>";
+            if (printUrl) {
+                html += `<a href='${escapeHtml(printUrl)}?print=1' target='_blank' class='btn-link'>Print</a>`;
+            }
+            if (pdfUrl) {
+                html += `<a href='${escapeHtml(pdfUrl)}' class='btn-link'>Download PDF</a>`;
+            }
+            html += "</div>";
+            html += "</div>";
+
+            html += "<hr style='margin:0.9rem 0; border:none; border-top:1px solid #d9e4f5;'>";
+            html += `<strong>Patient:</strong> ${escapeHtml(patient.name)} | ${escapeHtml(patient.phone)}<br>`;
+            html += `<strong>Doctor:</strong> ${escapeHtml(doctor.name)} (${escapeHtml(doctor.specialty)})`;
+
+            html += "<table style='width:100%; border-collapse:collapse; margin-top:0.9rem;'>";
+            html += "<thead><tr style='background:#dce8ff; font-weight:600;'>";
+            html += "<th style='border:1px solid #c6d7fa; padding:8px; text-align:left;'>Description</th>";
+            html += "<th style='border:1px solid #c6d7fa; padding:8px; text-align:left;'>Type</th>";
+            html += "<th style='border:1px solid #c6d7fa; padding:8px; text-align:right;'>Amount</th>";
+            html += "</tr></thead><tbody>";
+
+            if (!lineItems.length) {
+                html += "<tr><td colspan='3' style='border:1px solid #c6d7fa; padding:8px;'>No line items.</td></tr>";
+            } else {
+                html += lineItems.map((item) => (
+                    "<tr>" +
+                    `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.description)}</td>` +
+                    `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.line_type)}</td>` +
+                    `<td style='border:1px solid #c6d7fa; padding:8px; text-align:right;'>${escapeHtml(item.amount)}</td>` +
+                    "</tr>"
+                )).join("");
+            }
+
+            html += "</tbody></table>";
+
+            html += "<div style='margin-top:0.9rem; display:grid; gap:0.3rem; justify-content:end;'>";
+            html += `<div><strong>Subtotal:</strong> ${escapeHtml(totals.subtotal)}</div>`;
+            html += `<div><strong>Discount:</strong> ${escapeHtml(totals.discount)}</div>`;
+            html += `<div><strong>Tax:</strong> ${escapeHtml(totals.tax)}</div>`;
+            html += `<div><strong>Total:</strong> ${escapeHtml(totals.total)}</div>`;
+            html += "</div>";
+
+            return html;
         }
 
         function setDefaultSlotDate() {
@@ -230,6 +327,12 @@
                     messageBox.textContent =
                         `Patient successfully added. OPD Number: ${data.opd_number}\n` +
                         `Appointment booked successfully. Token: ${formData.get("token") || "-"}`;
+
+                    const billingForm = document.getElementById("patientBillingForm");
+                    if (billingForm) {
+                        billingForm.elements.opd_number.value = appointmentData.patient_opd_number || data.opd_number || "";
+                        billingForm.elements.appointment_id.value = appointmentData.appointment_id || "";
+                    }
                 } else {
                     messageBox.className = "result-box result-error";
                     const appointmentErrorMessage = {
@@ -242,6 +345,12 @@
                     messageBox.textContent =
                         `Patient successfully added. OPD Number: ${data.opd_number}\n` +
                         appointmentErrorMessage;
+
+                    const billingForm = document.getElementById("patientBillingForm");
+                    if (billingForm) {
+                        billingForm.elements.opd_number.value = data.opd_number || "";
+                        billingForm.elements.appointment_id.value = "";
+                    }
                 }
 
                 form.reset();
@@ -260,6 +369,176 @@
 
             messageBox.className = "result-box result-error";
             messageBox.textContent = data.error || "Registration failed";
+        });
+
+        async function createOrGetBillingLedger(formData, resultBox) {
+            const ledgerPayload = new URLSearchParams({
+                opd_number: formData.get("opd_number") || "",
+                appointment_id: formData.get("appointment_id") || "",
+            });
+
+            const ledgerRes = await fetch("/api/billing/ledger/by-opd/create/", {
+                method: "POST",
+                headers: {
+                    "X-CSRFToken": getCSRFToken(),
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                body: ledgerPayload,
+                credentials: "same-origin",
+            });
+            const ledgerData = await ledgerRes.json().catch(() => ({}));
+
+            if (!ledgerRes.ok) {
+                const errorMessage = {
+                    appointment_not_found: "Appointment ID not found for this OPD. Leave Appointment ID empty or enter a valid one.",
+                    opd_number_required: "Patient OPD Number is required.",
+                    opd_number_mismatch: "Appointment ID does not belong to this OPD number.",
+                }[ledgerData.error] || ledgerData.error || "Unable to create/open billing ledger.";
+                resultBox.className = "result-box result-error";
+                resultBox.textContent = errorMessage;
+                return null;
+            }
+
+            const ledgerId = ledgerData.data && ledgerData.data.ledger_id;
+            if (!ledgerId) {
+                resultBox.className = "result-box result-error";
+                resultBox.textContent = "Ledger created but ledger ID missing in response.";
+                return null;
+            }
+            return {
+                ledgerId,
+                ledgerData,
+            };
+        }
+
+        async function addOpdFeeLineItem(ledgerId, formData, resultBox) {
+            const lineItemPayload = new URLSearchParams({
+                line_type: "OPD_NEW_FEE",
+                amount: formData.get("amount") || "",
+                description: formData.get("description") || "OPD Registration Fee",
+            });
+
+            const lineItemRes = await fetch(`/api/billing/ledger/${ledgerId}/line-items/`, {
+                method: "POST",
+                headers: {
+                    "X-CSRFToken": getCSRFToken(),
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                body: lineItemPayload,
+                credentials: "same-origin",
+            });
+            const lineItemData = await lineItemRes.json().catch(() => ({}));
+
+            if (lineItemRes.ok) {
+                return { ok: true, alreadyPresent: false };
+            }
+
+            if (lineItemData.error === "opd_new_fee_already_present") {
+                return { ok: true, alreadyPresent: true };
+            }
+
+            const errorMessage = {
+                invalid_amount: "Please enter a valid OPD fee amount.",
+                ledger_finalized: "Ledger already finalized. OPD fee cannot be added.",
+                ledger_not_found: "Billing ledger not found.",
+            }[lineItemData.error] || lineItemData.error || "Unable to add OPD fee.";
+            resultBox.className = "result-box result-error";
+            resultBox.textContent = errorMessage;
+            return { ok: false, alreadyPresent: false };
+        }
+
+        document.getElementById("patientBillingGetInvoiceBtn").addEventListener("click", async () => {
+            const form = document.getElementById("patientBillingForm");
+            const resultBox = document.getElementById("patientBillingResult");
+            const invoiceResultBox = document.getElementById("patientBillingInvoiceResult");
+
+            resultBox.className = "result-box";
+            resultBox.textContent = "Generating invoice...";
+            invoiceResultBox.className = "result-box";
+            invoiceResultBox.textContent = "";
+
+            const formData = new FormData(form);
+            const ledgerResult = await createOrGetBillingLedger(formData, resultBox);
+            if (!ledgerResult) {
+                return;
+            }
+            const ledgerId = ledgerResult.ledgerId;
+            const initialInvoiceId = ledgerResult.ledgerData && ledgerResult.ledgerData.data && ledgerResult.ledgerData.data.invoice
+                ? ledgerResult.ledgerData.data.invoice.invoice_id
+                : null;
+
+            const feeResult = await addOpdFeeLineItem(ledgerId, formData, resultBox);
+            if (!feeResult.ok) {
+                return;
+            }
+
+            let invoiceId = initialInvoiceId;
+
+            if (!invoiceId) {
+                const finalizePayload = new URLSearchParams({
+                    tax: "0",
+                    discount: "0",
+                });
+                const finalizeRes = await fetch(`/api/billing/ledger/${ledgerId}/finalize/`, {
+                    method: "POST",
+                    headers: {
+                        "X-CSRFToken": getCSRFToken(),
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    },
+                    body: finalizePayload,
+                    credentials: "same-origin",
+                });
+                const finalizeData = await finalizeRes.json().catch(() => ({}));
+
+                if (finalizeRes.ok) {
+                    invoiceId = finalizeData.data && finalizeData.data.invoice_id;
+                } else if (finalizeData.error === "ledger_finalized") {
+                    const ledgerGetRes = await fetch(`/api/billing/ledger/by-opd/?opd_number=${encodeURIComponent(formData.get("opd_number") || "")}`, {
+                        credentials: "same-origin",
+                    });
+                    const ledgerGetData = await ledgerGetRes.json().catch(() => ({}));
+                    invoiceId = ledgerGetRes.ok && ledgerGetData.data && ledgerGetData.data.invoice
+                        ? ledgerGetData.data.invoice.invoice_id
+                        : null;
+                } else {
+                    const errorMessage = {
+                        mandatory_new_opd_fee_missing: "Please add OPD fee before finalizing bill.",
+                        ledger_not_found: "Billing ledger not found.",
+                    }[finalizeData.error] || finalizeData.error || "Unable to finalize bill.";
+                    resultBox.className = "result-box result-error";
+                    resultBox.textContent = errorMessage;
+                    return;
+                }
+            }
+
+            if (!invoiceId) {
+                resultBox.className = "result-box result-error";
+                resultBox.textContent = "Unable to resolve invoice ID for this OPD.";
+                return;
+            }
+
+            invoiceResultBox.className = "result-box";
+            invoiceResultBox.textContent = "Loading invoice...";
+
+            const invoiceRes = await fetch(`/api/billing/invoice/${encodeURIComponent(invoiceId)}/`, {
+                credentials: "same-origin",
+            });
+            const invoiceData = await invoiceRes.json().catch(() => ({}));
+
+            if (!invoiceRes.ok) {
+                const errorMessage = {
+                    invoice_not_found: "Invoice not found. Please verify Invoice ID.",
+                }[invoiceData.error] || invoiceData.error || "Unable to fetch invoice.";
+                invoiceResultBox.className = "result-box result-error";
+                invoiceResultBox.textContent = errorMessage;
+                return;
+            }
+
+            const invoicePayload = invoiceData.data || {};
+            resultBox.className = "result-box result-success";
+            resultBox.textContent = `Invoice ready. Invoice ID: ${invoicePayload.invoice_id || invoiceId}`;
+            invoiceResultBox.className = "result-box result-success";
+            invoiceResultBox.innerHTML = renderInvoiceCard(invoicePayload);
         });
 
         document.querySelector('#patientRegisterForm input[name="slot_date"]').addEventListener("change", async () => {

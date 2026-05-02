@@ -5,13 +5,37 @@
 
 {% block content %}
 <div class="container">
+    <style>
+        @keyframes receptionBlink {
+            0% {
+                background-color: #fff4bf;
+            }
+
+            50% {
+                background-color: #ffe08a;
+            }
+
+            100% {
+                background-color: #fff4bf;
+            }
+        }
+
+        .reception-called-row {
+            animation: receptionBlink 1s infinite;
+        }
+    </style>
 
     <section class="toolbar">
         <button class="btn-link" onclick="window.location.href = document.referrer || '/'">&#8592; Back</button>
     </section>
 
     <section>
-        <h2>1. Search Patient</h2>
+        <h2>Today's Appointments (Live)</h2>
+        <div id="receptionTodayQueueResult" class="result-box">Loading live queue...</div>
+    </section>
+
+    <section>
+        <h2>Search Patient</h2>
         <form id="patientSearchForm" class="form-grid">
             <label>Name <input type="text" name="name" placeholder="First Last" /></label>
             <label>Mobile <input type="text" name="phone" placeholder="10-digit mobile" /></label>
@@ -22,7 +46,7 @@
     </section>
 
     <section>
-        <h2>2. Book Appointment</h2>
+        <h2>Book Appointment</h2>
         <form id="appointmentBookForm" class="form-grid">
             <input type="hidden" name="patient_id" />
             <label>Patient Name <input type="text" name="patient_name" readonly required
@@ -233,6 +257,60 @@
             document.getElementById(targetId).textContent = text;
         }
 
+        async function loadReceptionTodayQueueBoard() {
+            const resultEl = document.getElementById("receptionTodayQueueResult");
+            const res = await fetch("/api/reception/appointments/today/", { credentials: "same-origin" });
+            const data = await res.json().catch(() => ({}));
+
+            if (!res.ok) {
+                resultEl.className = "result-box result-error";
+                resultEl.textContent = data.error || "Unable to load live queue board.";
+                return;
+            }
+
+            const items = data.appointments || [];
+            if (!items.length) {
+                resultEl.className = "result-box result-success";
+                resultEl.innerHTML = `<strong>Date:</strong> ${data.date || "-"}<br>No appointments found for today.`;
+                return;
+            }
+
+            const latestCalledAppointmentId = data.latest_called_appointment_id;
+            let html = `<strong>Date:</strong> ${data.date || "-"}<br><br>`;
+            html += "<table style='width:100%; border-collapse:collapse;'>";
+            html += "<thead><tr style='background:#dce8ff; font-weight:600;'>";
+            html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Doctor</th>";
+            html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Queue #</th>";
+            html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Queue Status</th>";
+            html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Patient</th>";
+            html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Mobile</th>";
+            html += "<th style='border:1px solid #c6d7fa; padding:8px;'>OPD</th>";
+            html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Time</th>";
+            html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Appointment</th>";
+            html += "</tr></thead><tbody>";
+
+            html += items.map((item) => {
+                const shouldBlink = latestCalledAppointmentId && Number(item.appointment_id) === Number(latestCalledAppointmentId);
+                const trClass = shouldBlink ? " class='reception-called-row'" : "";
+                return `
+                    <tr${trClass}>
+                        <td style='border:1px solid #c6d7fa; padding:8px;'>${item.doctor_name || "-"}</td>
+                        <td style='border:1px solid #c6d7fa; padding:8px;'>${item.queue_token || "-"}</td>
+                        <td style='border:1px solid #c6d7fa; padding:8px;'><strong>${item.queue_status || "-"}</strong></td>
+                        <td style='border:1px solid #c6d7fa; padding:8px;'>${item.patient_name || "-"}</td>
+                        <td style='border:1px solid #c6d7fa; padding:8px;'>${item.mobile || "-"}</td>
+                        <td style='border:1px solid #c6d7fa; padding:8px;'>${item.opd_number || "-"}</td>
+                        <td style='border:1px solid #c6d7fa; padding:8px;'>${item.start_time || "-"}</td>
+                        <td style='border:1px solid #c6d7fa; padding:8px;'>${item.status || "-"}</td>
+                    </tr>
+                `;
+            }).join("");
+
+            html += "</tbody></table>";
+            resultEl.className = "result-box result-success";
+            resultEl.innerHTML = html;
+        }
+
         document.getElementById("patientSearchForm").addEventListener("submit", async (e) => {
             e.preventDefault();
             const params = new URLSearchParams(new FormData(e.target));
@@ -426,6 +504,8 @@
 
         setDefaultSlotDate();
         loadDoctors();
+        loadReceptionTodayQueueBoard();
+        setInterval(loadReceptionTodayQueueBoard, 5000);
     </script>
 </div>
 {% endblock %}

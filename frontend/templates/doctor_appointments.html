@@ -1,10 +1,30 @@
 {% extends "base.html" %}
 
-{% block title %}Today's Appointments - OPD Management System{% endblock %}
-{% block page_title %}Today's Appointments{% endblock %}
+{% block title %}My Appointments - OPD Management System{% endblock %}
+{% block page_title %}My Appointments{% endblock %}
 
 {% block content %}
 <div class="container">
+    <style>
+        @keyframes calledBlink {
+            0% {
+                background-color: #fff4bf;
+            }
+
+            50% {
+                background-color: #ffe08a;
+            }
+
+            100% {
+                background-color: #fff4bf;
+            }
+        }
+
+        .called-row {
+            animation: calledBlink 1s infinite;
+        }
+    </style>
+
     <section class="toolbar">
         <button class="btn-link" onclick="window.location.href = document.referrer || '/'">&#8592; Back</button>
     </section>
@@ -12,9 +32,6 @@
     <section>
         <h2>View Appointments</h2>
         <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem;">
-            <button type="button" onclick="loadAppointmentsForDate('today')"
-                style="padding:0.5rem 1rem; background:#1a4d6d; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.95rem;">Load
-                Today's Appointments</button>
             <button type="button" onclick="loadAppointmentsForDate('tomorrow')"
                 style="padding:0.5rem 1rem; background:#1a7d4d; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.95rem;">Load
                 Tomorrow's Appointments</button>
@@ -32,13 +49,22 @@
     let loadedDoctorId = null;
     let loadedSlotDate = null;
     let loadedDateType = "today";
+    let appointmentsRenderKey = "";
+    let appointmentsRequestInFlight = false;
 
 
-    async function loadAppointments(dateType) {
+    async function loadAppointments(dateType, options = {}) {
+        const silent = Boolean(options.silent);
+        if (appointmentsRequestInFlight) {
+            return;
+        }
+        appointmentsRequestInFlight = true;
         loadedDateType = dateType;
         const listEl = document.getElementById("appointmentsList");
-        listEl.className = "result-box";
-        listEl.textContent = "Loading appointments...";
+        if (!silent && !appointmentsRenderKey) {
+            listEl.className = "result-box";
+            listEl.textContent = "Loading appointments...";
+        }
 
         try {
             const res = await fetch("/api/doctors/appointments/today/?date_type=" + dateType, { credentials: "same-origin" });
@@ -48,21 +74,28 @@
                 data = JSON.parse(text);
             } catch (e) {
                 // Response is not JSON - likely an error page or session expired
-                listEl.className = "result-box result-error";
-                listEl.textContent = "Session expired or server error. Please log in again.";
+                if (!silent) {
+                    listEl.className = "result-box result-error";
+                    listEl.textContent = "Session expired or server error. Please log in again.";
+                }
                 return;
             }
 
             if (res.ok && data.appointments && data.appointments.length > 0) {
+                const renderKey = JSON.stringify({
+                    doctor_id: data.doctor_id,
+                    date: data.date,
+                    appointments: data.appointments,
+                });
+                if (silent && renderKey === appointmentsRenderKey) {
+                    return;
+                }
+
                 loadedDoctorId = data.doctor_id || null;
                 loadedSlotDate = data.date || null;
                 listEl.className = "result-box result-success";
                 let html = "<strong>Doctor: " + (data.doctor_name || "-") + "</strong><br>";
                 html += "<strong>Date: " + (data.date || "-") + "</strong><br><br>";
-                html += "<div style='margin-bottom:0.75rem;'>";
-                html += "<button type='button' onclick='callNextPatient()' style='padding:0.45rem 0.9rem; background:#6b1a4d; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.9rem;'>Call Next Patient in Queue</button>";
-                html += "</div>";
-                html += "<pre id='callNextResult' class='result-box' style='margin-bottom:0.75rem;'></pre>";
                 html += "<table style='width:100%; border-collapse:collapse; font-size:0.95rem; line-height:1.8;'>";
                 html += "<tr style='background:#dce8ff; font-weight:bold;'>";
                 html += "<td style='padding:10px; border:1px solid #c6d7fa;'>#</td>";
@@ -71,17 +104,23 @@
                 html += "<td style='padding:10px; border:1px solid #c6d7fa;'>Mobile</td>";
                 html += "<td style='padding:10px; border:1px solid #c6d7fa;'>Time</td>";
                 html += "<td style='padding:10px; border:1px solid #c6d7fa;'>Status</td>";
+                html += "<td style='padding:10px; border:1px solid #c6d7fa;'>Queue Token</td>";
+                html += "<td style='padding:10px; border:1px solid #c6d7fa;'>Queue Status</td>";
                 html += "<td style='padding:10px; border:1px solid #c6d7fa;'>Action</td>";
                 html += "</tr>";
                 data.appointments.forEach((apt, i) => {
                     const isCompleted = String(apt.status || "").toUpperCase() === "COMPLETED";
-                    html += "<tr>";
+                    const isCalled = String(apt.queue_status || "") === "CALLED";
+                    const rowClass = isCalled ? " class='called-row'" : "";
+                    html += `<tr${rowClass}>`;
                     html += "<td style='padding:10px; border:1px solid #c6d7fa;'>" + (i + 1) + "</td>";
                     html += "<td style='padding:10px; border:1px solid #c6d7fa;'>" + (apt.opd_number || "-") + "</td>";
                     html += "<td style='padding:10px; border:1px solid #c6d7fa;'><strong>" + (apt.patient_name || "-") + "</strong></td>";
                     html += "<td style='padding:10px; border:1px solid #c6d7fa;'>" + (apt.mobile || "-") + "</td>";
                     html += "<td style='padding:10px; border:1px solid #c6d7fa;'>" + (apt.start_time || "-") + "</td>";
                     html += "<td style='padding:10px; border:1px solid #c6d7fa;'><strong>" + (apt.status || "-") + "</strong></td>";
+                    html += "<td style='padding:10px; border:1px solid #c6d7fa;'>" + (apt.queue_token || "-") + "</td>";
+                    html += "<td style='padding:10px; border:1px solid #c6d7fa;'><strong>" + (apt.queue_status || "-") + "</strong></td>";
                     html += "<td style='padding:10px; border:1px solid #c6d7fa;'>";
                     html += isCompleted
                         ? "<button type='button' disabled style='padding:0.3rem 0.75rem; background:#94a3b8; color:#fff; border:none; border-radius:6px; cursor:not-allowed; font-size:0.88rem;'>Consult</button>"
@@ -91,33 +130,60 @@
                 });
                 html += "</table>";
                 listEl.innerHTML = html;
+                appointmentsRenderKey = renderKey;
             } else if (res.ok) {
+                const renderKey = JSON.stringify({
+                    doctor_id: data.doctor_id,
+                    date: data.date,
+                    appointments: [],
+                    date_type: dateType,
+                });
+                if (silent && renderKey === appointmentsRenderKey) {
+                    return;
+                }
+
                 loadedDoctorId = data.doctor_id || null;
                 loadedSlotDate = data.date || null;
                 listEl.className = "result-box result-success";
                 const dateLabel = dateType === "today" ? "today" : "tomorrow";
                 listEl.innerHTML = "<strong>Date: " + (data.date || "-") + "</strong><br><strong>No appointments scheduled for " + dateLabel + ".</strong>";
+                appointmentsRenderKey = renderKey;
             } else {
                 loadedDoctorId = null;
                 loadedSlotDate = null;
-                listEl.className = "result-box result-error";
-                const errorMsg = data.error ? "Error: " + data.error : "Error loading appointments. Status: " + res.status;
-                listEl.textContent = errorMsg;
+                if (!silent) {
+                    listEl.className = "result-box result-error";
+                    const errorMsg = data.error ? "Error: " + data.error : "Error loading appointments. Status: " + res.status;
+                    listEl.textContent = errorMsg;
+                }
             }
         } catch (err) {
             loadedDoctorId = null;
             loadedSlotDate = null;
-            listEl.className = "result-box result-error";
-            listEl.textContent = "Network error: " + err.message;
+            if (!silent) {
+                listEl.className = "result-box result-error";
+                listEl.textContent = "Network error: " + err.message;
+            }
+        } finally {
+            appointmentsRequestInFlight = false;
         }
     }
 
     function loadAppointmentsForDate(dateType) {
-        loadAppointments(dateType);
+        loadAppointments(dateType, { silent: false });
     }
 
-    function consultAppointment(appointmentId) {
-        // Navigate to the consultation page with the appointment ID
+    async function consultAppointment(appointmentId) {
+        try {
+            await fetch(`/api/queue/appointment/${appointmentId}/called/`, {
+                method: "POST",
+                headers: { "X-CSRFToken": getCSRFToken(), "Content-Type": "application/x-www-form-urlencoded" },
+                credentials: "same-origin",
+            });
+        } catch (_) {
+            // Non-blocking: continue to consultation screen even if queue update fails.
+        }
+
         window.location.href = "/doctor/consultation/?appointment_id=" + appointmentId;
     }
 
@@ -170,6 +236,15 @@
             resultEl.textContent = msg;
         }
     }
+
+    // Keep doctor list in sync with queue updates from reception/consultation flow.
+    loadAppointments("today", { silent: false });
+
+    setInterval(() => {
+        if (loadedDateType) {
+            loadAppointments(loadedDateType, { silent: true });
+        }
+    }, 2000);
 
 
 </script>

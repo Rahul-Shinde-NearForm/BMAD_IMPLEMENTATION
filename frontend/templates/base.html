@@ -270,11 +270,12 @@
                 <span id="sidebarPhotoPlaceholder" style="font-size: 24px;">👤</span>
             </div>
             <div style="flex-grow: 1;">
-                <strong style="font-size: 14px; display: block;">{{ user.username }}</strong>
+                <strong id="sidebarUserName" style="font-size: 14px; display: block;">{{ user.username }}</strong>
             </div>
         </div>
 
         {% if user.is_authenticated %}
+        {% if not is_admin %}
         <!-- Home -->
         <a href="/" class="menu-item">Home</a>
 
@@ -297,6 +298,7 @@
         {% if is_receptionist or is_admin %}
         <a href="/patients/register/" class="menu-item">Register New Patient</a>
         <a href="/patients/edit/" class="menu-item">Edit Patient Details</a>
+        <a href="/workbench/reception/#billing" class="menu-item">Billing</a>
         <a href="/appointments/book/" class="menu-item">Book Appointment</a>
         <a href="/patients/reminder/" class="menu-item">Tomorrow's Reminder List</a>
         <a href="/doctors/schedule/" class="menu-item">Doctor Schedule</a>
@@ -310,7 +312,7 @@
         {% endif %}
 
         <!-- Pharmacy Menu -->
-        {% if is_pharmacist or is_admin %}
+        {% if is_pharmacist %}
         <div class="menu-item" onclick="toggleSubmenu('pharmacy-menu')">
             Pharmacy
             <span class="menu-toggle">▼</span>
@@ -319,6 +321,8 @@
             <a href="/workbench/pharmacy/" class="submenu-item">Prescription Queue</a>
             <a href="/workbench/pharmacy/" class="submenu-item">Billing</a>
         </div>
+        {% endif %}
+
         {% endif %}
 
         {% endif %}
@@ -370,7 +374,42 @@
             }
         }
 
+        async function loadSidebarUserName() {
+            const nameEl = document.getElementById('sidebarUserName');
+            if (!nameEl) {
+                return;
+            }
+            try {
+                const res = await fetch('/api/users/profile/', { credentials: 'same-origin' });
+                if (!res.ok) {
+                    return;
+                }
+                const data = await res.json();
+                const firstName = (data.first_name || '').trim();
+                const lastName = (data.last_name || '').trim();
+                const fullName = `${firstName} ${lastName}`.trim();
+                const roles = data.roles || [];
+                const isDoctor = roles.includes('Doctor');
+                const suffix = (data.suffix || 'Dr').trim();
+                if (isDoctor) {
+                    const baseName = fullName || nameEl.textContent.trim();
+                    const normalizedBase = baseName.toLowerCase().replace(/\./g, '');
+                    const normalizedSuffix = suffix.toLowerCase().replace(/\./g, '');
+                    if (normalizedBase.startsWith(`${normalizedSuffix} `) || normalizedBase === normalizedSuffix) {
+                        nameEl.textContent = baseName;
+                    } else {
+                        nameEl.textContent = `${suffix} ${baseName}`;
+                    }
+                } else {
+                    nameEl.textContent = fullName || nameEl.textContent;
+                }
+            } catch (_) {
+                // Keep server-rendered fallback username if profile API fails.
+            }
+        }
+
         loadSidebarPhoto();
+        loadSidebarUserName();
 
         // Update IST clock and date
         function updateClockAndDate() {

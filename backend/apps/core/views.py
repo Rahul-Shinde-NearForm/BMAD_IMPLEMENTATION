@@ -30,7 +30,7 @@ from .forms import (
 	UserRoleAssignForm,
 	VitalsForm,
 )
-from .models import Appointment, BillingHandoff, Consultation, Doctor, DoctorSlot, IncidentRecord, MedicalOrder, Patient, Prescription, QueueItem, ReportExport, Vitals
+from .models import Appointment, BillingHandoff, BillingInvoice, BillingLedger, BillingLineItem, ClinicSettings, Consultation, Doctor, DoctorSlot, IncidentRecord, MedicalOrder, Patient, Prescription, QueueItem, ReportExport, Vitals
 from .authz import role_required
 from .services import (
 	ROLE_PERMISSION_MATRIX,
@@ -59,19 +59,95 @@ from .services import (
 	find_duplicate_candidates,
 	health_payload,
 	create_billing_handoff,
+	create_or_get_active_billing_ledger,
 	list_billing_handoffs,
+	add_billing_line_item,
 	list_queue_board,
+	finalize_billing_ledger,
 	queue_action,
+	queue_mark_called_for_appointment,
 	log_search,
 	reschedule_appointment,
 	search_patients,
+	sync_queue_for_day,
 	send_billing_handoff,
+	set_repeat_fee_decision,
 	tomorrow_reminder_report,
 	upsert_doctor_schedule,
 )
 
 
 audit_logger = logging.getLogger("audit")
+
+
+def _billing_line_item_payload(item):
+	return {
+		"line_item_id": item.id,
+		"line_type": item.line_type,
+		"description": item.description,
+		"amount": str(item.amount),
+		"source_order_id": item.source_order_id,
+		"created_by": item.created_by,
+		"created_at": item.created_at.isoformat(),
+	}
+
+
+def _billing_ledger_payload(ledger):
+	return {
+		"ledger_id": ledger.id,
+		"opd_number": ledger.opd_number,
+		"appointment_id": ledger.appointment_id,
+		"patient_id": ledger.patient_id,
+		"doctor_id": ledger.doctor_id,
+		"visit_date": str(ledger.visit_date),
+		"visit_type": ledger.visit_type,
+		"status": ledger.status,
+		"repeat_fee_decision": ledger.repeat_fee_decision,
+		"repeat_fee_reason": ledger.repeat_fee_reason,
+		"finalized_by": ledger.finalized_by,
+		"finalized_at": ledger.finalized_at.isoformat() if ledger.finalized_at else None,
+		"line_items": [_billing_line_item_payload(item) for item in ledger.line_items.all()],
+		"invoice": {
+			"invoice_id": ledger.invoice.id,
+			"bill_number": ledger.invoice.bill_number,
+			"subtotal": str(ledger.invoice.subtotal),
+			"discount": str(ledger.invoice.discount),
+			"tax": str(ledger.invoice.tax),
+			"total": str(ledger.invoice.total),
+			"created_at": ledger.invoice.created_at.isoformat(),
+		} if hasattr(ledger, "invoice") else None,
+	}
+
+
+def _opd_clinic_name():
+	return ClinicSettings.get_solo().clinic_name
+
+
+def _opd_clinic_address():
+	return ClinicSettings.get_solo().clinic_address
+
+
+def _invoice_print_context(invoice, auto_print=False):
+	line_items = BillingLineItem.objects.filter(ledger_id=invoice.ledger_id).order_by("created_at")
+	return {
+		"auto_print": auto_print,
+		"clinic_name": _opd_clinic_name(),
+		"clinic_address": _opd_clinic_address(),
+		"invoice_id": invoice.id,
+		"bill_number": invoice.bill_number,
+		"created_at": invoice.created_at,
+		"opd_number": invoice.ledger.opd_number,
+		"visit_date": invoice.ledger.visit_date,
+		"patient_name": f"{invoice.ledger.patient.first_name} {invoice.ledger.patient.last_name}".strip(),
+		"patient_phone": invoice.ledger.patient.phone,
+		"doctor_name": invoice.ledger.doctor.display_name,
+		"doctor_specialty": invoice.ledger.doctor.specialty,
+		"line_items": line_items,
+		"subtotal": invoice.subtotal,
+		"discount": invoice.discount,
+		"tax": invoice.tax,
+		"total": invoice.total,
+	}
 
 
 def _age_from_dob(dob):
@@ -86,11 +162,21 @@ def _redirect_user_mgmt(status, message):
 
 def home(request):
 	roles = set(request.user.groups.values_list("name", flat=True)) if request.user.is_authenticated else set()
+	welcome_name = request.user.username if request.user.is_authenticated else ""
+	if request.user.is_authenticated:
+		base_name = (request.user.first_name or request.user.username or "").strip()
+		if "Doctor" in roles:
+			doctor_profile = getattr(request.user, "doctor_profile", None)
+			suffix = ((doctor_profile.suffix if doctor_profile else "Dr") or "Dr").strip().rstrip(".")
+			welcome_name = f"{suffix}.{base_name}" if base_name else f"{suffix}."
+		else:
+			welcome_name = base_name
 	context = {
 		"is_admin": "Admin" in roles,
 		"is_doctor": "Doctor" in roles,
 		"is_receptionist": "Receptionist" in roles,
 		"is_pharmacist": "Pharmacist" in roles,
+		"welcome_name": welcome_name,
 	}
 	return render(request, "home.html", context)
 
@@ -313,7 +399,7 @@ def patient_opd_history_view(request, patient_id):
 					"opd_number": a.opd_number,
 					"slot_date": str(a.slot_date),
 					"doctor_id": a.doctor_id,
-					"doctor_name": a.doctor.full_name,
+					"doctor_name": a.doctor.display_name,
 					"start_time": a.start_time.strftime("%H:%M"),
 					"visit_type": a.visit_type,
 					"channel": a.channel,
@@ -387,8 +473,9 @@ def user_profile_get(request):
 		"first_name": user.first_name,
 		"last_name": user.last_name,
 		"email": user.email,
-		"phone": profile.phone if profile else "",
+		"phone": doctor_profile.phone if doctor_profile else (profile.phone if profile else ""),
 		"reg_number": doctor_profile.reg_number if doctor_profile else "",
+		"suffix": doctor_profile.suffix if doctor_profile else "Dr",
 		"bio": profile.bio if profile else "",
 		"department": profile.department if profile else "",
 		"roles": roles,
@@ -418,8 +505,10 @@ def user_profile_update(request):
 
 		doctor_profile = getattr(user, "doctor_profile", None)
 		if doctor_profile is not None:
+			doctor_profile.phone = data.get("phone", doctor_profile.phone)
 			doctor_profile.reg_number = data.get("reg_number", doctor_profile.reg_number)
-			doctor_profile.save(update_fields=["reg_number"])
+			doctor_profile.suffix = data.get("suffix", doctor_profile.suffix or "Dr")
+			doctor_profile.save(update_fields=["phone", "reg_number", "suffix"])
 		
 		return JsonResponse({"status": "ok", "message": "Profile updated successfully"})
 	except Exception as e:
@@ -550,7 +639,7 @@ def doctor_list(request):
 				if active_count < get_doctor_capacity_for_date(doctor, parsed_slot_date):
 					eligible_doctors.append(doctor.id)
 			doctors = doctors.filter(id__in=eligible_doctors)
-	items = [{"id": doctor.id, "name": doctor.full_name, "specialty": doctor.specialty} for doctor in doctors]
+	items = [{"id": doctor.id, "name": doctor.display_name, "specialty": doctor.specialty} for doctor in doctors]
 	return JsonResponse({"items": items})
 
 
@@ -655,20 +744,42 @@ def doctor_today_appointments(request):
 			pass
 	
 	if not doctor:
-		return JsonResponse({"error": "no_doctor_profile_for_user", "details": f"Could not find doctor profile for user {request.user.username}"}, status=404)
+		# No doctor profile yet - return empty appointments gracefully
+		return JsonResponse(
+			{
+				"doctor_id": None,
+				"doctor_name": request.user.first_name or request.user.username,
+				"date": str(timezone.localdate()),
+				"latest_called_appointment_id": None,
+				"appointments": [],
+			}
+		)
 	
 	# Get date based on date_type parameter (today or tomorrow)
 	date_type = request.GET.get("date_type", "today")
 	for_date = timezone.localdate()
 	if date_type == "tomorrow":
 		for_date = for_date + timedelta(days=1)
+
+	sync_queue_for_day(doctor.id, for_date)
+	queue_items = {
+		item.appointment_id: item
+		for item in QueueItem.objects.filter(doctor_id=doctor.id, slot_date=for_date)
+	}
+	latest_called = (
+		QueueItem.objects
+		.filter(doctor_id=doctor.id, slot_date=for_date, status="CALLED")
+		.order_by("-called_at")
+		.first()
+	)
 	
 	appointments = doctor_appointments_for_day(doctor.id, for_date)
 	return JsonResponse(
 		{
 			"doctor_id": doctor.id,
-			"doctor_name": doctor.full_name,
+			"doctor_name": doctor.display_name,
 			"date": str(for_date),
+			"latest_called_appointment_id": latest_called.appointment_id if latest_called else None,
 			"appointments": [
 				{
 					"appointment_id": a.id,
@@ -679,6 +790,66 @@ def doctor_today_appointments(request):
 					"start_time": a.start_time.strftime("%H:%M"),
 					"end_time": a.end_time.strftime("%H:%M"),
 					"status": a.status,
+					"queue_token": queue_items[a.id].token_number if a.id in queue_items else None,
+					"queue_status": queue_items[a.id].status if a.id in queue_items else "NOT_IN_QUEUE",
+				}
+				for a in appointments
+			],
+		}
+	)
+
+
+@require_GET
+@login_required
+@role_required("Receptionist", "Admin")
+def receptionist_today_appointments_board(request):
+	from django.utils import timezone
+
+	for_date = timezone.localdate()
+	doctor_ids = list(
+		Doctor.objects.filter(appointments__slot_date=for_date)
+		.distinct()
+		.values_list("id", flat=True)
+	)
+	for doctor_id in doctor_ids:
+		sync_queue_for_day(doctor_id, for_date)
+
+	queue_items = {
+		item.appointment_id: item
+		for item in QueueItem.objects.select_related("appointment").filter(slot_date=for_date)
+	}
+	latest_called = (
+		QueueItem.objects
+		.filter(slot_date=for_date, status="CALLED")
+		.order_by("-called_at")
+		.first()
+	)
+
+	appointments = (
+		Appointment.objects
+		.select_related("patient", "doctor")
+		.filter(slot_date=for_date)
+		.exclude(status="CANCELLED")
+		.order_by("doctor__full_name", "start_time")
+	)
+
+	return JsonResponse(
+		{
+			"date": str(for_date),
+			"latest_called_appointment_id": latest_called.appointment_id if latest_called else None,
+			"appointments": [
+				{
+					"appointment_id": a.id,
+					"doctor_id": a.doctor_id,
+					"doctor_name": a.doctor.display_name,
+					"patient_id": a.patient_id,
+					"patient_name": f"{a.patient.first_name} {a.patient.last_name}",
+					"mobile": a.patient.phone,
+					"opd_number": a.opd_number,
+					"start_time": a.start_time.strftime("%H:%M"),
+					"status": a.status,
+					"queue_token": queue_items[a.id].token_number if a.id in queue_items else None,
+					"queue_status": queue_items[a.id].status if a.id in queue_items else "NOT_IN_QUEUE",
 				}
 				for a in appointments
 			],
@@ -709,7 +880,7 @@ def tomorrow_reminder_report_view(request):
 					"opd_number": a.opd_number,
 					"patient_name": f"{a.patient.first_name} {a.patient.last_name}",
 					"mobile": a.patient.phone,
-					"doctor_name": a.doctor.full_name,
+					"doctor_name": a.doctor.display_name,
 					"slot_time": a.start_time.strftime("%H:%M"),
 				}
 				for a in items
@@ -729,7 +900,7 @@ def tomorrow_reminder_report_pdf_download_view(request):
 		try:
 			doctor = Doctor.objects.get(full_name__icontains=doctor_name)
 			doctor_id = doctor.id
-			resolved_doctor_name = doctor.full_name
+			resolved_doctor_name = doctor.display_name
 		except Doctor.DoesNotExist:
 			resolved_doctor_name = doctor_name
 
@@ -751,7 +922,7 @@ def tomorrow_reminder_report_pdf_download_view(request):
 					f"{idx}. {patient_name}",
 					f"   OPD Number: {appointment.opd_number or '-'}",
 					f"   Mobile: {appointment.patient.phone or '-'}",
-					f"   Doctor: {appointment.doctor.full_name}",
+					f"   Doctor: {appointment.doctor.display_name}",
 					f"   Slot Time: {appointment.start_time.strftime('%H:%M')}",
 					"",
 				]
@@ -829,6 +1000,8 @@ def user_role_management(request):
 		{
 			"users": user_rows,
 			"roles": roles,
+			"clinic_name": _opd_clinic_name(),
+			"clinic_address": _opd_clinic_address(),
 			"create_form": UserCreateForm(),
 			"assign_form": UserRoleAssignForm(),
 			"message": request.GET.get("message", ""),
@@ -840,19 +1013,72 @@ def user_role_management(request):
 @require_POST
 @login_required
 @role_required("Admin")
+def clinic_settings_update(request):
+	clinic_name = (request.POST.get("clinic_name") or "").strip()
+	clinic_address = (request.POST.get("clinic_address") or "").strip()
+	if not clinic_name:
+		return _redirect_user_mgmt("error", "Clinic name is required.")
+	settings = ClinicSettings.get_solo()
+	settings.clinic_name = clinic_name
+	settings.clinic_address = clinic_address
+	settings.save(update_fields=["clinic_name", "clinic_address", "updated_at"])
+	return _redirect_user_mgmt("success", "Clinic details updated successfully.")
+
+
+@require_POST
+@login_required
+@role_required("Admin")
 def user_create(request):
 	form = UserCreateForm(request.POST)
 	roles = sorted(ROLE_PERMISSION_MATRIX.keys())
-	if not form.is_valid() or form.cleaned_data["role"] not in roles:
+	if not form.is_valid():
+		return _redirect_user_mgmt("error", "User creation failed. Check input values.")
+
+	role_name = (form.cleaned_data.get("role") or "").strip()
+	if role_name and role_name not in roles:
 		return _redirect_user_mgmt("error", "User creation failed. Check input values.")
 
 	user = User.objects.create_user(
 		username=form.cleaned_data["username"],
 		password=form.cleaned_data["password"],
 	)
-	group, _ = Group.objects.get_or_create(name=form.cleaned_data["role"])
-	user.groups.set([group])
-	return _redirect_user_mgmt("success", f"User {user.username} created with role {group.name}.")
+	user.first_name = (form.cleaned_data.get("first_name") or "").strip()
+	user.last_name = (form.cleaned_data.get("last_name") or "").strip()
+	user.email = (form.cleaned_data.get("email") or "").strip()
+	user.save(update_fields=["first_name", "last_name", "email"])
+
+	group = None
+	if role_name:
+		group, _ = Group.objects.get_or_create(name=role_name)
+		user.groups.set([group])
+
+	if group and group.name == "Doctor":
+		doctor_full_name = (form.cleaned_data.get("doctor_full_name") or "").strip()
+		if not doctor_full_name:
+			doctor_full_name = f"{user.first_name} {user.last_name}".strip() or user.username
+
+		doctor_specialty = (form.cleaned_data.get("doctor_specialty") or "").strip()
+		if not doctor_specialty:
+			doctor_specialty = "General Medicine"
+
+		doctor_capacity = form.cleaned_data.get("doctor_daily_patient_capacity") or 50
+
+		Doctor.objects.update_or_create(
+			user=user,
+			defaults={
+				"full_name": doctor_full_name,
+				"suffix": (form.cleaned_data.get("doctor_suffix") or "Dr").strip() or "Dr",
+				"specialty": doctor_specialty,
+				"phone": (form.cleaned_data.get("doctor_phone") or "").strip(),
+				"reg_number": (form.cleaned_data.get("doctor_reg_number") or "").strip(),
+				"qualification": (form.cleaned_data.get("doctor_qualification") or "").strip(),
+				"daily_patient_capacity": doctor_capacity,
+			},
+		)
+
+	if group:
+		return _redirect_user_mgmt("success", f"User {user.username} created with role {group.name}.")
+	return _redirect_user_mgmt("success", f"User {user.username} created successfully.")
 
 
 @require_POST
@@ -871,6 +1097,22 @@ def user_assign_role(request):
 
 	group, _ = Group.objects.get_or_create(name=form.cleaned_data["role"])
 	user.groups.set([group])
+	
+	# Auto-create a basic doctor profile if assigning Doctor role and profile doesn't exist
+	if group.name == "Doctor":
+		doctor_profile, created = Doctor.objects.get_or_create(
+			user=user,
+			defaults={
+				"full_name": f"{user.first_name} {user.last_name}".strip() or user.username,
+				"suffix": "Dr",
+				"specialty": "General Medicine",
+				"phone": "",
+				"daily_patient_capacity": 50,
+			},
+		)
+		if created:
+			return _redirect_user_mgmt("success", f"Role for {user.username} updated to {group.name}. Doctor profile created.")
+	
 	return _redirect_user_mgmt("success", f"Role for {user.username} updated to {group.name}.")
 
 
@@ -891,7 +1133,7 @@ def queue_board(request):
 
 @require_POST
 @login_required
-@role_required("Receptionist", "Admin")
+@role_required("Receptionist", "Doctor", "Admin")
 def queue_call_next(request):
 	form = QueueCallNextForm(request.POST)
 	if not form.is_valid():
@@ -913,6 +1155,31 @@ def queue_call_next(request):
 			"status": queue_item.status,
 			"queue_item_id": queue_item.id,
 			"event": payload,
+		}
+	)
+
+
+@require_POST
+@login_required
+@role_required("Doctor", "Receptionist", "Admin")
+def queue_mark_called(request, appointment_id):
+	try:
+		queue_item = queue_mark_called_for_appointment(appointment_id, request.user.username)
+	except Appointment.DoesNotExist:
+		return JsonResponse({"error": "appointment_not_found"}, status=404)
+	except QueueItem.DoesNotExist:
+		return JsonResponse({"error": "queue_item_not_found"}, status=404)
+	except ValueError as exc:
+		if str(exc) == "invalid_transition":
+			return JsonResponse({"error": "invalid_transition"}, status=409)
+		raise
+
+	return JsonResponse(
+		{
+			"status": queue_item.status,
+			"queue_item_id": queue_item.id,
+			"appointment_id": queue_item.appointment_id,
+			"token_number": queue_item.token_number,
 		}
 	)
 
@@ -1076,7 +1343,7 @@ def consultation_context(request, appointment_id):
 			{
 				"consultation_id": consultation.id,
 				"appointment_id": consultation.appointment_id,
-				"doctor_name": consultation.doctor.full_name,
+				"doctor_name": consultation.doctor.display_name,
 				"slot_date": str(consultation.appointment.slot_date),
 				"chief_complaint": consultation.chief_complaint,
 				"diagnosis": consultation.diagnosis,
@@ -1101,7 +1368,7 @@ def consultation_context(request, appointment_id):
 			"consultation_id": last_prescription.consultation_id,
 			"rx_number": last_prescription.rx_number,
 			"issued_at": last_prescription.issued_at.strftime("%d/%m/%Y %H:%M"),
-			"doctor_name": last_prescription.doctor.full_name,
+			"doctor_name": last_prescription.doctor.display_name,
 			"special_instructions": last_prescription.special_instructions,
 			"items": last_prescription.items,
 		}
@@ -1134,8 +1401,9 @@ def consultation_context(request, appointment_id):
 			"appointment": {
 				"appointment_id": appointment.id,
 				"opd_number": appointment.opd_number,
+				"doctor_id": appointment.doctor_id,
 				"slot_date": str(appointment.slot_date),
-				"doctor_name": appointment.doctor.full_name,
+				"doctor_name": appointment.doctor.display_name,
 			},
 			"patient": {
 				"patient_id": patient.id,
@@ -1334,14 +1602,14 @@ def prescription_get(request, consultation_id):
 			"issued_at": p.issued_at.strftime("%d/%m/%Y %H:%M"),
 			"validity_days": p.validity_days,
 			"doctor": {
-				"name": doctor.full_name,
+				"name": doctor.display_name,
 				"specialty": doctor.specialty,
 				"qualification": p.doctor_qualification,
 				"reg_number": p.doctor_reg_number,
 			},
 			"clinic": {
-				"name": p.clinic_name,
-				"address": p.clinic_address,
+				"name": p.clinic_name or _opd_clinic_name(),
+				"address": p.clinic_address or _opd_clinic_address(),
 			},
 			# --- Patient Section ---
 			"patient": {
@@ -1410,7 +1678,7 @@ def prescription_history_by_patient(request):
 			"patient_id": p.patient_id,
 			"patient_name": f"{p.patient.first_name} {p.patient.last_name}",
 			"mobile": p.patient.phone,
-			"doctor_name": p.doctor.full_name,
+			"doctor_name": p.doctor.display_name,
 			"diagnosis": p.consultation.diagnosis,
 			"item_count": len(p.items or []),
 		}
@@ -1438,12 +1706,12 @@ def prescription_print(request, consultation_id):
 		"auto_print": request.GET.get("print") == "1",
 		"issued_at": p.issued_at,
 		"validity_days": p.validity_days,
-		"doctor_name": doctor.full_name,
+		"clinic_name": p.clinic_name or _opd_clinic_name(),
+		"clinic_address": p.clinic_address or _opd_clinic_address(),
+		"doctor_name": doctor.display_name,
 		"doctor_specialty": doctor.specialty,
 		"doctor_qualification": p.doctor_qualification,
 		"doctor_reg_number": p.doctor_reg_number,
-		"clinic_name": p.clinic_name,
-		"clinic_address": p.clinic_address,
 		"patient_name": f"{patient.first_name} {patient.last_name}",
 		"patient_mrn": patient.mrn,
 		"patient_age": p.patient_age_at_issue,
@@ -1557,7 +1825,7 @@ def patient_medical_order_context(request, patient_id):
 			},
 			"latest_finalized_consultation": {
 				"consultation_id": latest_consultation.id,
-				"doctor_name": latest_consultation.doctor.full_name,
+				"doctor_name": latest_consultation.doctor.display_name,
 				"slot_date": str(latest_consultation.appointment.slot_date),
 				"finalized_at": latest_consultation.finalized_at.strftime("%d/%m/%Y %H:%M") if latest_consultation.finalized_at else None,
 				"diagnosis": latest_consultation.diagnosis,
@@ -1570,7 +1838,7 @@ def patient_medical_order_context(request, patient_id):
 					"order_type": order.order_type,
 					"description": order.description,
 					"status": order.status,
-					"doctor_name": order.consultation.doctor.full_name,
+					"doctor_name": order.consultation.doctor.display_name,
 					"created_by": order.created_by,
 					"created_at": order.created_at.strftime("%d/%m/%Y %H:%M"),
 				}
@@ -1601,6 +1869,249 @@ def medical_order_list(request, consultation_id):
 			],
 		}
 	)
+
+
+@login_required
+@require_GET
+@role_required("Receptionist", "Admin")
+def billing_ledger_by_opd_get(request):
+	opd_number = request.GET.get("opd_number", "").strip()
+	if not opd_number:
+		return JsonResponse({"error": "opd_number_required"}, status=400)
+
+	ledger = (
+		BillingLedger.objects.select_related("patient", "doctor")
+		.prefetch_related("line_items")
+		.filter(opd_number=opd_number)
+		.first()
+	)
+	if ledger is None:
+		return JsonResponse({"error": "ledger_not_found"}, status=404)
+
+	return JsonResponse({"status": "success", "message": "ledger_fetched", "data": _billing_ledger_payload(ledger)})
+
+
+@login_required
+@require_POST
+@role_required("Receptionist", "Admin")
+def billing_ledger_by_opd_create(request):
+	opd_number = request.POST.get("opd_number", "").strip()
+	appointment_id_raw = request.POST.get("appointment_id", "").strip()
+	appointment_id = None
+	if appointment_id_raw:
+		try:
+			appointment_id = int(appointment_id_raw)
+		except ValueError:
+			return JsonResponse({"error": "invalid_appointment_id"}, status=400)
+
+	try:
+		ledger, created = create_or_get_active_billing_ledger(opd_number, request.user.username, appointment_id=appointment_id)
+	except Appointment.DoesNotExist:
+		return JsonResponse({"error": "appointment_not_found"}, status=404)
+	except ValueError as exc:
+		return JsonResponse({"error": str(exc)}, status=400)
+
+	ledger = BillingLedger.objects.select_related("patient", "doctor").prefetch_related("line_items").get(id=ledger.id)
+	return JsonResponse(
+		{
+			"status": "success",
+			"message": "ledger_created" if created else "ledger_reused",
+			"data": _billing_ledger_payload(ledger),
+		},
+		status=201 if created else 200,
+	)
+
+
+@login_required
+@require_POST
+@role_required("Receptionist", "Admin")
+def billing_ledger_add_line_item(request, ledger_id):
+	line_type = request.POST.get("line_type", "").strip()
+	amount = request.POST.get("amount", "").strip()
+	description = request.POST.get("description", "").strip()
+	source_order_id = request.POST.get("source_order_id", "").strip()
+	if not line_type or not amount:
+		return JsonResponse({"error": "line_type_and_amount_required"}, status=400)
+
+	try:
+		item = add_billing_line_item(
+			ledger_id=ledger_id,
+			line_type=line_type,
+			amount=amount,
+			actor_username=request.user.username,
+			description=description,
+			source_order_id=source_order_id,
+		)
+	except BillingLedger.DoesNotExist:
+		return JsonResponse({"error": "ledger_not_found"}, status=404)
+	except ValueError as exc:
+		return JsonResponse({"error": str(exc)}, status=400)
+
+	return JsonResponse({"status": "success", "message": "line_item_added", "data": _billing_line_item_payload(item)}, status=201)
+
+
+@login_required
+@require_POST
+@role_required("Receptionist", "Admin")
+def billing_ledger_repeat_fee_decision(request, ledger_id):
+	decision = request.POST.get("decision", "").strip().upper()
+	reason = request.POST.get("reason", "").strip()
+	amount = request.POST.get("amount", "").strip()
+	amount_value = amount if amount else None
+
+	try:
+		ledger = set_repeat_fee_decision(
+			ledger_id=ledger_id,
+			decision=decision,
+			actor_username=request.user.username,
+			reason=reason,
+			amount=amount_value,
+		)
+	except BillingLedger.DoesNotExist:
+		return JsonResponse({"error": "ledger_not_found"}, status=404)
+	except ValueError as exc:
+		return JsonResponse({"error": str(exc)}, status=400)
+
+	ledger = BillingLedger.objects.select_related("patient", "doctor").prefetch_related("line_items").get(id=ledger.id)
+	return JsonResponse({"status": "success", "message": "repeat_fee_decision_saved", "data": _billing_ledger_payload(ledger)})
+
+
+@login_required
+@require_POST
+@role_required("Receptionist", "Admin")
+def billing_ledger_finalize(request, ledger_id):
+	tax = request.POST.get("tax", "0").strip() or "0"
+	discount = request.POST.get("discount", "0").strip() or "0"
+	try:
+		ledger, invoice = finalize_billing_ledger(
+			ledger_id=ledger_id,
+			actor_username=request.user.username,
+			tax=tax,
+			discount=discount,
+		)
+	except BillingLedger.DoesNotExist:
+		return JsonResponse({"error": "ledger_not_found"}, status=404)
+	except ValueError as exc:
+		return JsonResponse({"error": str(exc)}, status=400)
+
+	return JsonResponse(
+		{
+			"status": "success",
+			"message": "ledger_finalized",
+			"data": {
+				"ledger_id": ledger.id,
+				"ledger_status": ledger.status,
+				"invoice_id": invoice.id,
+				"bill_number": invoice.bill_number,
+				"subtotal": str(invoice.subtotal),
+				"discount": str(invoice.discount),
+				"tax": str(invoice.tax),
+				"total": str(invoice.total),
+			},
+		}
+	)
+
+
+@login_required
+@require_GET
+@role_required("Receptionist", "Admin")
+def billing_invoice_get(request, invoice_id):
+	try:
+		invoice = BillingInvoice.objects.select_related("ledger", "ledger__patient", "ledger__doctor").get(id=invoice_id)
+	except BillingInvoice.DoesNotExist:
+		return JsonResponse({"error": "invoice_not_found"}, status=404)
+
+	line_items = BillingLineItem.objects.filter(ledger_id=invoice.ledger_id).order_by("created_at")
+	return JsonResponse(
+		{
+			"status": "success",
+			"message": "invoice_fetched",
+			"data": {
+				"clinic_name": _opd_clinic_name(),
+				"clinic_address": _opd_clinic_address(),
+				"invoice_id": invoice.id,
+				"bill_number": invoice.bill_number,
+				"created_at": invoice.created_at.isoformat(),
+				"opd_number": invoice.ledger.opd_number,
+				"visit_date": str(invoice.ledger.visit_date),
+				"patient": {
+					"patient_id": invoice.ledger.patient_id,
+					"name": f"{invoice.ledger.patient.first_name} {invoice.ledger.patient.last_name}".strip(),
+					"phone": invoice.ledger.patient.phone,
+				},
+				"doctor": {
+					"doctor_id": invoice.ledger.doctor_id,
+					"name": invoice.ledger.doctor.display_name,
+					"specialty": invoice.ledger.doctor.specialty,
+				},
+				"line_items": [_billing_line_item_payload(item) for item in line_items],
+				"totals": {
+					"subtotal": str(invoice.subtotal),
+					"discount": str(invoice.discount),
+					"tax": str(invoice.tax),
+					"total": str(invoice.total),
+				},
+				"print_url": f"/billing/invoice/{invoice.id}/print/",
+				"pdf_download_url": f"/api/billing/invoice/{invoice.id}/pdf/",
+			},
+		}
+	)
+
+
+@login_required
+@require_GET
+@role_required("Receptionist", "Admin")
+@xframe_options_sameorigin
+def billing_invoice_print(request, invoice_id):
+	try:
+		invoice = BillingInvoice.objects.select_related("ledger", "ledger__patient", "ledger__doctor").get(id=invoice_id)
+	except BillingInvoice.DoesNotExist:
+		return JsonResponse({"error": "invoice_not_found"}, status=404)
+
+	context = _invoice_print_context(invoice, auto_print=request.GET.get("print") == "1")
+	return render(request, "billing_invoice_print.html", context)
+
+
+@login_required
+@require_GET
+@role_required("Receptionist", "Admin")
+def billing_invoice_pdf_download(request, invoice_id):
+	try:
+		invoice = BillingInvoice.objects.select_related("ledger", "ledger__patient", "ledger__doctor").get(id=invoice_id)
+	except BillingInvoice.DoesNotExist:
+		return JsonResponse({"error": "invoice_not_found"}, status=404)
+
+	line_items = BillingLineItem.objects.filter(ledger_id=invoice.ledger_id).order_by("created_at")
+	lines = [
+		"OPD Billing Invoice",
+		f"Clinic: {_opd_clinic_name()}",
+		f"Clinic Address: {_opd_clinic_address() or '-'}",
+		f"Bill Number: {invoice.bill_number}",
+		f"Invoice Date: {invoice.created_at.strftime('%Y-%m-%d %H:%M')}",
+		f"OPD Number: {invoice.ledger.opd_number}",
+		f"Visit Date: {invoice.ledger.visit_date}",
+		f"Patient: {invoice.ledger.patient.first_name} {invoice.ledger.patient.last_name}".strip(),
+		f"Mobile: {invoice.ledger.patient.phone or '-'}",
+		f"Doctor: {invoice.ledger.doctor.display_name}",
+		"",
+		"Line Items:",
+	]
+	for idx, item in enumerate(line_items, start=1):
+		lines.append(f"{idx}. {item.line_type} | {item.description or '-'} | Amount: {item.amount}")
+	lines.extend(
+		[
+			"",
+			f"Subtotal: {invoice.subtotal}",
+			f"Discount: {invoice.discount}",
+			f"Tax: {invoice.tax}",
+			f"Total: {invoice.total}",
+		]
+	)
+	payload = "\n".join(lines)
+
+	response = HttpResponse(payload, content_type="application/pdf")
+	response["Content-Disposition"] = f'attachment; filename="invoice-{invoice.bill_number}.pdf"'
+	return response
 
 
 # ---------------------------------------------------------------------------
