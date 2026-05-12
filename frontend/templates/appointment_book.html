@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
-{% block title %}Book Appointment - OPD Management System{% endblock %}
-{% block page_title %}Book Appointment{% endblock %}
+{% block title %}Old Patients Appointment - OPD Management System{% endblock %}
+{% block page_title %}Old Patients Appointment{% endblock %}
 
 {% block content %}
 <div class="container">
@@ -23,60 +23,115 @@
         .reception-called-row {
             animation: receptionBlink 1s infinite;
         }
+
+        .appointment-layout {
+            display: grid;
+            grid-template-columns: minmax(280px, 1fr) minmax(280px, 1fr) minmax(280px, 1fr);
+            gap: 1.5rem;
+            align-items: start;
+            margin-bottom: 1.5rem;
+        }
+
+        .appointment-panel {
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            padding: 1rem;
+            background: #fff;
+        }
+
+        .appointment-panel h2 {
+            margin-top: 0;
+        }
+
+        @media (max-width: 1200px) {
+            .appointment-layout {
+                grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
+            }
+        }
+
+        @media (max-width: 900px) {
+            .appointment-layout {
+                grid-template-columns: 1fr;
+            }
+        }
     </style>
 
     <section class="toolbar">
         <button class="btn-link" onclick="window.location.href = document.referrer || '/'">&#8592; Back</button>
     </section>
 
-    <section>
-        <h2>Today's Appointments (Live)</h2>
-        <div id="receptionTodayQueueResult" class="result-box">Loading live queue...</div>
-    </section>
+    <div class="appointment-layout">
+        <div class="appointment-panel">
+            <h2>Search Patient</h2>
+            <form id="patientSearchForm" class="form-grid">
+                <label>Name <input type="text" name="name" placeholder="First Last" /></label>
+                <label>Mobile <input type="text" name="phone" placeholder="10-digit mobile" /></label>
+                <label>Patient OPD Number <input type="text" name="opd_number" placeholder="OPDP-000001" /></label>
+                <div><button type="submit">Search</button></div>
+            </form>
+            <div id="patientSearchResult" class="result-box"></div>
+        </div>
 
-    <section>
-        <h2>Search Patient</h2>
-        <form id="patientSearchForm" class="form-grid">
-            <label>Name <input type="text" name="name" placeholder="First Last" /></label>
-            <label>Mobile <input type="text" name="phone" placeholder="10-digit mobile" /></label>
-            <label>Patient OPD Number <input type="text" name="opd_number" placeholder="OPDP-000001" /></label>
-            <div><button type="submit">Search</button></div>
-        </form>
-        <div id="patientSearchResult" class="result-box"></div>
-    </section>
+        <div class="appointment-panel">
+            <h2>Book Appointment</h2>
+            <form id="appointmentBookForm" class="form-grid">
+                <input type="hidden" name="patient_id" />
+                <label>Patient Name <input type="text" name="patient_name" readonly required
+                        placeholder="Select from search results" /></label>
+                <label>Doctor Name
+                    <select name="doctor_id" required>
+                        <option value="">Select doctor</option>
+                    </select>
+                </label>
+                <label>Slot Date <input type="date" name="slot_date" required /></label>
+                <label>Token
+                    <input type="number" name="token" id="tokenInput" min="1" required readonly
+                        placeholder="Select doctor &amp; date" style="background:#f4f4f4; cursor:not-allowed;" />
+                    <small id="capacityInfo" style="color:#555; display:block; margin-top:4px;"></small>
+                </label>
+                <label>Visit Type
+                    <select name="visit_type">
+                        <option value="NEW">NEW</option>
+                        <option value="FOLLOW_UP">FOLLOW_UP</option>
+                        <option value="FOLLOW_UP_RCT">FOLLOW_UP_RCT</option>
+                    </select>
+                </label>
+                <label style="display:flex; align-items:center; gap:0.5rem; margin-top:1.65rem;">
+                    <input type="checkbox" name="is_emergency" id="isEmergencyInput" />
+                    Mark as Emergency (priority queue)
+                </label>
+                <label>Channel
+                    <select name="channel">
+                        <option value="WALK_IN">WALK_IN</option>
+                        <option value="PHONE">MOBILE</option>
+                    </select>
+                </label>
+                <div><button type="submit">Book Appointment</button></div>
+            </form>
+            <pre id="appointmentBookResult" class="result-box"></pre>
+        </div>
 
-    <section>
-        <h2>Book Appointment</h2>
-        <form id="appointmentBookForm" class="form-grid">
-            <input type="hidden" name="patient_id" />
-            <label>Patient Name <input type="text" name="patient_name" readonly required
-                    placeholder="Select from search results" /></label>
-            <label>Doctor Name
-                <select name="doctor_id" required>
-                    <option value="">Select doctor</option>
-                </select>
-            </label>
-            <label>Slot Date <input type="date" name="slot_date" required /></label>
-            <label>Token
-                <input type="number" name="token" id="tokenInput" min="1" required readonly
-                    placeholder="Select doctor &amp; date" style="background:#f4f4f4; cursor:not-allowed;" />
-                <small id="capacityInfo" style="color:#555; display:block; margin-top:4px;"></small>
-            </label>
-            <label>Visit Type
-                <select name="visit_type">
-                    <option value="NEW">NEW</option>
-                    <option value="FOLLOW_UP">FOLLOW_UP</option>
-                </select>
-            </label>
-            <label>Channel
-                <select name="channel">
-                    <option value="WALK_IN">WALK_IN</option>
-                    <option value="PHONE">MOBILE</option>
-                </select>
-            </label>
-            <div><button type="submit">Book Appointment</button></div>
-        </form>
-        <pre id="appointmentBookResult" class="result-box"></pre>
+        <div class="appointment-panel">
+            <h2>Billing Option</h2>
+            <small id="appointmentBillingHint" style="display:block; margin-bottom:0.5rem; color:#555;">For
+                FOLLOW_UP_RCT, a new invoice is generated by copying the previous invoice values and preserving payment
+                history details.</small>
+            <form id="appointmentBillingForm" class="form-grid">
+                <label>Patient OPD Number <input type="text" name="opd_number" placeholder="OPDP-000001"
+                        required /></label>
+                <label>Appointment ID (optional) <input type="number" name="appointment_id" min="1" /></label>
+                <label>OPD Fee Amount <input type="number" name="amount" min="0.01" step="0.01" required /></label>
+                <label>Description <input type="text" name="description" value="OPD Registration Fee" /></label>
+                <div><button type="button" id="appointmentBillingGetInvoiceBtn">Get Invoice</button></div>
+            </form>
+            <pre id="appointmentBillingResult" class="result-box"></pre>
+            <div id="appointmentBillingInvoiceResult" class="result-box"></div>
+        </div>
+    </div>
+
+    <section style="margin-top: 1.5rem;">
+        <h2>Doctor Emergency Reschedule Alerts</h2>
+        <div id="dayRescheduleAlertsResult" class="result-box">Loading pending alerts...</div>
     </section>
 
     <section id="patientAppointmentsSection" style="display:none; margin-top: 1.5rem;">
@@ -94,6 +149,10 @@
             </label>
             <label style="grid-column:1 / -1;">Reason
                 <input type="text" name="reason" value="Patient requested reschedule" required />
+            </label>
+            <label style="display:flex; align-items:center; gap:0.5rem; grid-column:1 / -1;">
+                <input type="checkbox" name="is_emergency" />
+                Mark as Emergency (priority queue)
             </label>
             <div style="display:flex; gap:0.75rem; align-items:center; grid-column:1 / -1;">
                 <button type="submit">Save Changes</button>
@@ -120,13 +179,158 @@
             slotDateInput.value = `${yyyy}-${mm}-${dd}`;
         }
 
+        const bookingPrefillParams = new URLSearchParams(window.location.search);
+        const prefillPatientId = bookingPrefillParams.get("patient_id");
+        const prefillDoctorId = bookingPrefillParams.get("doctor_id");
+        const prefillPhone = bookingPrefillParams.get("phone");
+        const DEFAULT_OPD_EXISTING_PATIENT_FEE = 100;
+        const DOCTOR_EXISTING_FEE_BY_ID = new Map();
+
         let selectedPatient = null;
+        let billingDisabledForRctFollowUp = false;
+        let billingStateRequestToken = 0;
+
+        function parseFee(value, fallback) {
+            const num = Number(value);
+            return Number.isFinite(num) && num >= 0 ? num : fallback;
+        }
+
+        function getSelectedDoctorExistingFee() {
+            const bookForm = document.getElementById("appointmentBookForm");
+            const doctorId = bookForm && bookForm.elements && bookForm.elements.doctor_id
+                ? String(bookForm.elements.doctor_id.value || "")
+                : "";
+            const configuredFee = doctorId ? DOCTOR_EXISTING_FEE_BY_ID.get(doctorId) : null;
+            return parseFee(configuredFee, DEFAULT_OPD_EXISTING_PATIENT_FEE);
+        }
+
+        function prefillBillingForExistingPatient(patient) {
+            const billingForm = document.getElementById("appointmentBillingForm");
+            if (!billingForm || !patient) {
+                return;
+            }
+
+            const opdInput = billingForm.elements.opd_number;
+            const amountInput = billingForm.elements.amount;
+            const descriptionInput = billingForm.elements.description;
+            const patientOpd = (patient.opd_number || "").trim();
+
+            if (opdInput && patientOpd) {
+                opdInput.value = patientOpd;
+                opdInput.style.borderColor = "#4CAF50";
+                setTimeout(() => {
+                    opdInput.style.borderColor = "";
+                }, 1500);
+            }
+
+            if (amountInput) {
+                amountInput.value = getSelectedDoctorExistingFee().toFixed(2);
+            }
+
+            if (descriptionInput && (!descriptionInput.value || descriptionInput.value === "OPD Registration Fee")) {
+                descriptionInput.value = "OPD Existing Patient Fee";
+            }
+        }
+
+        function setBillingOptionDisabled(disabled, message = "") {
+            const billingForm = document.getElementById("appointmentBillingForm");
+            const getInvoiceBtn = document.getElementById("appointmentBillingGetInvoiceBtn");
+            const resultBox = document.getElementById("appointmentBillingResult");
+            const billingHint = document.getElementById("appointmentBillingHint");
+            if (!billingForm || !getInvoiceBtn || !resultBox) {
+                return;
+            }
+
+            billingDisabledForRctFollowUp = Boolean(disabled);
+            Array.from(billingForm.elements).forEach((el) => {
+                if (!el || el.id === "appointmentBillingGetInvoiceBtn") {
+                    return;
+                }
+                el.disabled = billingDisabledForRctFollowUp;
+            });
+            getInvoiceBtn.disabled = billingDisabledForRctFollowUp;
+            getInvoiceBtn.style.opacity = billingDisabledForRctFollowUp ? "0.6" : "1";
+            getInvoiceBtn.style.cursor = billingDisabledForRctFollowUp ? "not-allowed" : "pointer";
+
+            if (billingDisabledForRctFollowUp) {
+                resultBox.className = "result-box result-success";
+                resultBox.textContent = message || "Billing option is disabled for RCT follow-up visits. Continue in the existing invoice ledger.";
+                if (billingHint) {
+                    billingHint.textContent = "Billing is disabled for this follow-up. Continue with the existing invoice ledger (no new OPD fee).";
+                    billingHint.style.color = "#92400e";
+                }
+            } else if (resultBox.textContent && resultBox.textContent.includes("Billing option is disabled for RCT follow-up visits")) {
+                resultBox.className = "result-box";
+                resultBox.textContent = "";
+                if (billingHint) {
+                    billingHint.textContent = "For FOLLOW_UP_RCT, a new invoice is generated by copying previous invoice values (no minus-sign display).";
+                    billingHint.style.color = "#555";
+                }
+            } else if (billingHint) {
+                billingHint.textContent = "For FOLLOW_UP_RCT, a new invoice is generated by copying previous invoice values (no minus-sign display).";
+                billingHint.style.color = "#555";
+            }
+        }
+
+        async function hasExistingRctCharge(opdNumber) {
+            if (!opdNumber) {
+                return false;
+            }
+
+            const res = await fetch(`/api/billing/ledger/by-opd/?opd_number=${encodeURIComponent(opdNumber)}`, {
+                credentials: "same-origin",
+                cache: "no-store",
+            });
+            if (!res.ok) {
+                return false;
+            }
+
+            const data = await res.json().catch(() => ({}));
+            const lineItems = data && data.data && Array.isArray(data.data.line_items)
+                ? data.data.line_items
+                : [];
+            return lineItems.some((item) => {
+                const lineType = String(item.line_type || "").toUpperCase();
+                return lineType === "RCT" || Boolean(item.total_case_amount);
+            });
+        }
+
+        async function updateBillingOptionState() {
+            const requestToken = ++billingStateRequestToken;
+            const bookingForm = document.getElementById("appointmentBookForm");
+            const billingForm = document.getElementById("appointmentBillingForm");
+            if (!bookingForm || !billingForm) {
+                return;
+            }
+
+            const visitType = String(bookingForm.elements.visit_type.value || "").toUpperCase();
+            const opdNumber = String((selectedPatient && selectedPatient.opd_number) || billingForm.elements.opd_number.value || "").trim();
+
+            if (visitType !== "FOLLOW_UP" || !opdNumber) {
+                setBillingOptionDisabled(false);
+                return;
+            }
+
+            const rctStarted = await hasExistingRctCharge(opdNumber);
+            if (requestToken !== billingStateRequestToken) {
+                return;
+            }
+
+            if (rctStarted) {
+                setBillingOptionDisabled(true, "Billing option is disabled for FOLLOW_UP when RCT has started. Continue with the existing invoice ledger.");
+                return;
+            }
+
+            setBillingOptionDisabled(false);
+        }
 
         function setSelectedPatient(patient) {
             selectedPatient = patient;
             const form = document.getElementById("appointmentBookForm");
             form.elements.patient_id.value = patient.id;
             form.elements.patient_name.value = patient.full_name;
+            prefillBillingForExistingPatient(patient);
+            updateBillingOptionState();
             loadPatientAppointments(patient.id);
         }
 
@@ -218,12 +422,21 @@
             const data = await res.json();
             const select = document.querySelector('#appointmentBookForm select[name="doctor_id"]');
             const items = data.items || [];
+            items.forEach((doctor) => {
+                const existingPatientFee = doctor.opd_existing_patient_fee
+                    ?? doctor.opd_old_patient_fee
+                    ?? doctor.oldFee
+                    ?? doctor.old_fee;
+                DOCTOR_EXISTING_FEE_BY_ID.set(String(doctor.id), parseFee(existingPatientFee, DEFAULT_OPD_EXISTING_PATIENT_FEE));
+            });
             select.innerHTML = '<option value="">Select doctor</option>' + items.map((doctor) => (
                 `<option value="${doctor.id}">${doctor.name}</option>`
             )).join("");
 
             if (currentDoctor && items.some((doctor) => String(doctor.id) === currentDoctor)) {
                 select.value = currentDoctor;
+            } else if (prefillDoctorId && items.some((doctor) => String(doctor.id) === String(prefillDoctorId))) {
+                select.value = String(prefillDoctorId);
             } else if (items.length > 0) {
                 // Pick earliest-added doctor as default (lowest id).
                 const firstAddedDoctor = items.reduce((earliest, doctor) => (
@@ -239,6 +452,74 @@
                 document.getElementById("appointmentBookResult").textContent = "";
             }
 
+            if (selectedPatient && selectedPatient.id) {
+                prefillBillingForExistingPatient(selectedPatient);
+            }
+
+            updateBillingOptionState();
+
+            fetchNextToken();
+        }
+
+        async function applyBookingPrefillFromQuery() {
+            if (prefillPhone) {
+                const searchForm = document.getElementById("patientSearchForm");
+                if (searchForm && searchForm.elements.phone) {
+                    searchForm.elements.phone.value = prefillPhone;
+                }
+            }
+
+            if (prefillPatientId) {
+                try {
+                    const detailRes = await fetch(`/api/patients/${encodeURIComponent(prefillPatientId)}/detail/`, { credentials: "same-origin" });
+                    const detail = await detailRes.json().catch(() => ({}));
+                    if (detailRes.ok && detail.id) {
+                        setSelectedPatient({
+                            id: detail.id,
+                            full_name: `${detail.first_name || ""} ${detail.last_name || ""}`.trim(),
+                            phone: detail.phone || "",
+                            opd_number: detail.opd_number || "",
+                        });
+                    }
+                } catch (_) {
+                    // Keep page usable even if prefill fetch fails.
+                }
+            }
+        }
+
+        function isEmergencyBookingMode() {
+            const checkbox = document.getElementById("isEmergencyInput");
+            return Boolean(checkbox && checkbox.checked);
+        }
+
+        function toggleEmergencyBookingMode() {
+            const form = document.getElementById("appointmentBookForm");
+            const tokenInput = form.elements.token;
+            const channelInput = form.elements.channel;
+            const capacityInfo = document.getElementById("capacityInfo");
+            const submitBtn = form.querySelector('button[type="submit"]');
+
+            if (isEmergencyBookingMode()) {
+                tokenInput.required = false;
+                tokenInput.value = "";
+                tokenInput.placeholder = "Auto-managed for emergency";
+                tokenInput.style.background = "#fff8f1";
+                tokenInput.disabled = true;
+                if (channelInput) {
+                    channelInput.value = "WALK_IN";
+                }
+                capacityInfo.style.color = "#9a3412";
+                capacityInfo.textContent = "Emergency mode bypasses capacity and creates priority queue entry.";
+                submitBtn.disabled = false;
+                submitBtn.textContent = "Add Emergency Appointment";
+                return;
+            }
+
+            tokenInput.required = true;
+            tokenInput.disabled = false;
+            tokenInput.placeholder = "Select doctor & date";
+            tokenInput.style.background = "#f4f4f4";
+            submitBtn.textContent = "Book Appointment";
             fetchNextToken();
         }
 
@@ -268,7 +549,40 @@
                 return;
             }
 
-            const items = data.appointments || [];
+            const items = (data.appointments || []).slice().sort((a, b) => {
+                const statusPriority = {
+                    CALLED: 0,
+                    RESUMED: 1,
+                    WAITING: 2,
+                    PAUSED: 3,
+                    NOT_IN_QUEUE: 4,
+                    COMPLETED: 9,
+                    CANCELLED: 10,
+                };
+                const aQueue = String(a.queue_status || "NOT_IN_QUEUE").toUpperCase();
+                const bQueue = String(b.queue_status || "NOT_IN_QUEUE").toUpperCase();
+                const aApp = String(a.status || "").toUpperCase();
+                const bApp = String(b.status || "").toUpperCase();
+
+                // Keep terminal rows at the bottom even if only queue status is terminal.
+                const doneStatuses = new Set(["COMPLETED", "CANCELLED", "NO_SHOW"]);
+                const aDone = doneStatuses.has(aApp) || doneStatuses.has(aQueue);
+                const bDone = doneStatuses.has(bApp) || doneStatuses.has(bQueue);
+                if (aDone !== bDone) return aDone ? 1 : -1;
+
+                // For active rows, emergency patients should come first.
+                const aEmergency = Boolean(a.is_emergency);
+                const bEmergency = Boolean(b.is_emergency);
+                if (aEmergency !== bEmergency) return aEmergency ? -1 : 1;
+
+                const aPriority = statusPriority[aQueue] ?? 5;
+                const bPriority = statusPriority[bQueue] ?? 5;
+                if (aPriority !== bPriority) return aPriority - bPriority;
+
+                const aToken = Number(a.queue_token || 999999);
+                const bToken = Number(b.queue_token || 999999);
+                return aToken - bToken;
+            });
             if (!items.length) {
                 resultEl.className = "result-box result-success";
                 resultEl.innerHTML = `<strong>Date:</strong> ${data.date || "-"}<br>No appointments found for today.`;
@@ -292,11 +606,14 @@
             html += items.map((item) => {
                 const shouldBlink = latestCalledAppointmentId && Number(item.appointment_id) === Number(latestCalledAppointmentId);
                 const trClass = shouldBlink ? " class='reception-called-row'" : "";
+                const statusText = item.is_emergency
+                    ? `Emergency | ${item.queue_status || "-"}`
+                    : (item.queue_status || "-");
                 return `
                     <tr${trClass}>
                         <td style='border:1px solid #c6d7fa; padding:8px;'>${item.doctor_name || "-"}</td>
                         <td style='border:1px solid #c6d7fa; padding:8px;'>${item.queue_token || "-"}</td>
-                        <td style='border:1px solid #c6d7fa; padding:8px;'><strong>${item.queue_status || "-"}</strong></td>
+                        <td style='border:1px solid #c6d7fa; padding:8px;'><strong>${statusText}</strong></td>
                         <td style='border:1px solid #c6d7fa; padding:8px;'>${item.patient_name || "-"}</td>
                         <td style='border:1px solid #c6d7fa; padding:8px;'>${item.mobile || "-"}</td>
                         <td style='border:1px solid #c6d7fa; padding:8px;'>${item.opd_number || "-"}</td>
@@ -331,9 +648,18 @@
             const doctorName = doctorSelect.options[doctorSelect.selectedIndex]?.text || "-";
             const slotDate = form.elements.slot_date.value;
             const token = form.elements.token.value;
+            const emergencyMode = isEmergencyBookingMode();
 
             const body = new URLSearchParams(new FormData(form));
-            const res = await fetch("/api/appointments/book/", {
+            const endpoint = emergencyMode ? "/api/appointments/add-emergency/" : "/api/appointments/book/";
+            if (emergencyMode) {
+                body.delete("token");
+                body.delete("slot_date");
+                body.delete("channel");
+                body.delete("is_emergency");
+            }
+
+            const res = await fetch(endpoint, {
                 method: "POST",
                 headers: { "X-CSRFToken": getCSRFToken(), "Content-Type": "application/x-www-form-urlencoded" },
                 body,
@@ -343,12 +669,22 @@
             try { data = JSON.parse(await res.text()); } catch (_) { }
             if (res.ok) {
                 resultEl.className = "result-box result-success";
-                resultEl.textContent =
-                    "Appointment booked successfully!\n" +
-                    "Patient: " + patientName + "\n" +
-                    "Doctor: " + doctorName + "\n" +
-                    "Date: " + slotDate + "   Token: " + token + "\n\n" +
-                    "Patient OPD Number: " + (data.patient_opd_number || "-");
+                if (emergencyMode) {
+                    resultEl.textContent =
+                        "Emergency appointment added successfully!\n" +
+                        "Patient: " + (data.patient_name || patientName) + "\n" +
+                        "Doctor: " + doctorName + "\n" +
+                        "Queue Status: " + (data.queue_status || "-") + "\n" +
+                        "Queue Position: " + ((data.queue_position || 0) + 1) + "\n\n" +
+                        "Patient OPD Number: " + (data.opd_number || "-");
+                } else {
+                    resultEl.textContent =
+                        "Appointment booked successfully!\n" +
+                        "Patient: " + patientName + "\n" +
+                        "Doctor: " + doctorName + "\n" +
+                        "Date: " + slotDate + "   Token: " + token + "\n\n" +
+                        "Patient OPD Number: " + (data.patient_opd_number || "-");
+                }
                 if (selectedPatient && selectedPatient.id) {
                     loadPatientAppointments(selectedPatient.id);
                 }
@@ -358,6 +694,8 @@
                     doctor_daily_capacity_reached: "This doctor has reached the maximum patient limit for the selected date.",
                     invalid_slot: "Selected slot is not available. Please choose another date or doctor.",
                     entity_not_found: "Patient or doctor not found. Please search again.",
+                    patient_not_found: "Patient not found. Please search and select patient again.",
+                    doctor_not_found: "Doctor not found. Please select a valid doctor.",
                     validation_failed: "Please fill all required fields correctly.",
                 }[data.error] || (data.error || "Booking failed. Please try again.");
                 resultEl.textContent = msg;
@@ -368,7 +706,16 @@
             loadDoctors();
         });
 
-        document.querySelector('#appointmentBookForm select[name="doctor_id"]').addEventListener("change", fetchNextToken);
+        document.querySelector('#appointmentBookForm select[name="doctor_id"]').addEventListener("change", () => {
+            fetchNextToken();
+            if (selectedPatient && selectedPatient.id) {
+                prefillBillingForExistingPatient(selectedPatient);
+            }
+        });
+        document.querySelector('#appointmentBookForm select[name="visit_type"]').addEventListener("change", () => {
+            updateBillingOptionState();
+        });
+        document.getElementById("isEmergencyInput").addEventListener("change", toggleEmergencyBookingMode);
 
         async function fetchNextTokenForEdit() {
             const form = document.getElementById("appointmentEditForm");
@@ -469,12 +816,105 @@
             }
         });
 
+        async function loadDayRescheduleAlerts() {
+            const resultEl = document.getElementById("dayRescheduleAlertsResult");
+            if (!resultEl) return;
+            const res = await fetch("/api/reception/day-reschedules/pending/", { credentials: "same-origin" });
+            const data = await res.json().catch(() => ({}));
+
+            if (!res.ok) {
+                resultEl.className = "result-box result-error";
+                resultEl.textContent = data.error || "Unable to load pending emergency reschedule alerts.";
+                return;
+            }
+
+            const items = data.items || [];
+            if (!items.length) {
+                resultEl.className = "result-box result-success";
+                resultEl.textContent = "No pending emergency reschedule decisions.";
+                return;
+            }
+
+            resultEl.className = "result-box result-error";
+            resultEl.innerHTML = `
+                <table style="width:100%; border-collapse:collapse;">
+                    <thead>
+                        <tr style="background:#ffdede;">
+                            <th style="border:1px solid #f2b4b4; padding:8px; text-align:left;">Doctor</th>
+                            <th style="border:1px solid #f2b4b4; padding:8px; text-align:left;">From</th>
+                            <th style="border:1px solid #f2b4b4; padding:8px; text-align:left;">To</th>
+                            <th style="border:1px solid #f2b4b4; padding:8px; text-align:left;">Appointments</th>
+                            <th style="border:1px solid #f2b4b4; padding:8px; text-align:left;">Overflow</th>
+                            <th style="border:1px solid #f2b4b4; padding:8px; text-align:left;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${items.map((item) => `
+                            <tr>
+                                <td style="border:1px solid #f2b4b4; padding:8px;">${escapeHtml(item.doctor_name)}</td>
+                                <td style="border:1px solid #f2b4b4; padding:8px;">${escapeHtml(item.source_date)}</td>
+                                <td style="border:1px solid #f2b4b4; padding:8px;">${escapeHtml(item.target_date)}</td>
+                                <td style="border:1px solid #f2b4b4; padding:8px;">${escapeHtml(item.total_appointments)}</td>
+                                <td style="border:1px solid #f2b4b4; padding:8px; color:#b91c1c;"><strong>${escapeHtml(item.overflow_count)}</strong></td>
+                                <td style="border:1px solid #f2b4b4; padding:8px; white-space:nowrap;">
+                                    <button type="button" data-action="decision-exceed" data-request-id="${item.request_id}">Approve & Exceed</button>
+                                    <button type="button" data-action="decision-cascade" data-request-id="${item.request_id}" style="margin-left:8px;">Move Excess Next Day</button>
+                                </td>
+                            </tr>
+                        `).join("")}
+                    </tbody>
+                </table>
+            `;
+        }
+
+        document.getElementById("dayRescheduleAlertsResult").addEventListener("click", async (e) => {
+            const btn = e.target.closest("button[data-action]");
+            if (!btn) return;
+
+            const requestId = btn.getAttribute("data-request-id");
+            const action = btn.getAttribute("data-action") === "decision-exceed" ? "EXCEED" : "CASCADE";
+            const confirmed = window.confirm(
+                action === "EXCEED"
+                    ? "Approve and exceed tomorrow's capacity for this doctor?"
+                    : "Move overflow appointments to next immediate day?"
+            );
+            if (!confirmed) return;
+
+            btn.disabled = true;
+            const body = new URLSearchParams({ action });
+            const res = await fetch(`/api/reception/day-reschedules/${requestId}/decide/`, {
+                method: "POST",
+                headers: { "X-CSRFToken": getCSRFToken(), "Content-Type": "application/x-www-form-urlencoded" },
+                body,
+                credentials: "same-origin",
+            });
+            const data = await res.json().catch(() => ({}));
+
+            if (!res.ok) {
+                alert(data.error || "Unable to apply decision.");
+                btn.disabled = false;
+                return;
+            }
+
+            await loadDayRescheduleAlerts();
+            alert("Decision saved and appointments rescheduled.");
+        });
+
         async function fetchNextToken() {
             const form = document.getElementById("appointmentBookForm");
             const doctorId = form.elements.doctor_id.value;
             const slotDate = form.elements.slot_date.value;
             const tokenInput = document.getElementById("tokenInput");
             const capacityInfo = document.getElementById("capacityInfo");
+            const submitBtn = document.querySelector('#appointmentBookForm button[type="submit"]');
+
+            if (isEmergencyBookingMode()) {
+                tokenInput.value = "";
+                capacityInfo.style.color = "#9a3412";
+                capacityInfo.textContent = "Emergency mode bypasses capacity and creates priority queue entry.";
+                submitBtn.disabled = false;
+                return;
+            }
 
             if (!doctorId || !slotDate) {
                 tokenInput.value = "";
@@ -492,20 +932,546 @@
                 tokenInput.value = "";
                 capacityInfo.style.color = "#c0392b";
                 capacityInfo.textContent = data.message || `Fully booked (${data.booked_count}/${data.daily_capacity})`;
-                document.querySelector('#appointmentBookForm button[type="submit"]').disabled = true;
+                submitBtn.disabled = true;
                 return;
             }
 
             tokenInput.value = data.next_token;
             capacityInfo.style.color = "#155724";
             capacityInfo.textContent = `${data.booked_count} of ${data.daily_capacity} slots used — Token #${data.next_token} assigned`;
-            document.querySelector('#appointmentBookForm button[type="submit"]').disabled = false;
+            submitBtn.disabled = false;
         }
+
+        function escapeHtml(value) {
+            if (value === null || value === undefined) return "-";
+            return String(value)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/\"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        function renderInvoiceCard(invoicePayload, options = {}) {
+            const lineItems = invoicePayload.line_items || [];
+            const totals = invoicePayload.totals || {};
+            const payment = invoicePayload.payment || {};
+            const patient = invoicePayload.patient || {};
+            const doctor = invoicePayload.doctor || {};
+            const clinicName = invoicePayload.clinic_name || "OPD Clinic";
+            const printUrl = invoicePayload.print_url || "";
+            const pdfUrl = invoicePayload.pdf_download_url || "";
+            const previousInvoice = options.previousInvoice || null;
+
+            const paymentStatus = String(payment.status || "PENDING").toUpperCase();
+            const paymentStatusStyle = {
+                DONE: "background:#dcfce7; color:#166534; border:1px solid #86efac;",
+                PENDING: "background:#fef3c7; color:#92400e; border:1px solid #fcd34d;",
+                FAILED: "background:#fee2e2; color:#991b1b; border:1px solid #fca5a5;",
+            }[paymentStatus] || "background:#e5e7eb; color:#374151; border:1px solid #d1d5db;";
+            const paymentStatusBadge = `<span style="display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700; ${paymentStatusStyle}">${escapeHtml(paymentStatus)}</span>`;
+
+            function formatSignedAmount(value) {
+                const num = Number(value || 0);
+                const normalized = Number.isFinite(num) ? Math.abs(num).toFixed(2) : String(value || "0");
+                return normalized;
+            }
+
+            let html = "<div style='display:flex; justify-content:space-between; gap:1rem; align-items:flex-start; flex-wrap:wrap;'>";
+            html += "<div>";
+            html += `<strong>Bill No:</strong> ${escapeHtml(invoicePayload.bill_number)}<br>`;
+            html += `<strong>Invoice ID:</strong> ${escapeHtml(invoicePayload.invoice_id)}<br>`;
+            html += `<strong>OPD Number:</strong> ${escapeHtml(invoicePayload.opd_number)}<br>`;
+            html += `<strong>Visit Date:</strong> ${escapeHtml(invoicePayload.visit_date)}<br>`;
+            html += `<strong>Clinic:</strong> ${escapeHtml(clinicName)}<br>`;
+            html += `<strong>Created At:</strong> ${escapeHtml(invoicePayload.created_at)}`;
+            html += "</div>";
+            html += "<div style='display:flex; gap:0.5rem; align-items:center;'>";
+            if (printUrl) {
+                const printParams = new URLSearchParams({ print: "1" });
+                if (previousInvoice) {
+                    if (previousInvoice.invoice_id) {
+                        printParams.set("previous_invoice_id", String(previousInvoice.invoice_id));
+                    }
+                    if (previousInvoice.bill_number) {
+                        printParams.set("previous_bill_no", String(previousInvoice.bill_number));
+                    }
+                    if (previousInvoice.visit_date) {
+                        printParams.set("previous_visit_date", String(previousInvoice.visit_date));
+                    }
+                    const previousPaymentStatus = String((previousInvoice.payment && previousInvoice.payment.status) || "").toUpperCase();
+                    if (previousPaymentStatus) {
+                        printParams.set("previous_payment_status", previousPaymentStatus);
+                    }
+                }
+                html += `<a href='${escapeHtml(printUrl)}?${escapeHtml(printParams.toString())}' target='_blank' class='btn-link'>Print</a>`;
+            }
+            if (pdfUrl) {
+                const pdfParams = new URLSearchParams({});
+                if (previousInvoice) {
+                    if (previousInvoice.invoice_id) {
+                        pdfParams.set("previous_invoice_id", String(previousInvoice.invoice_id));
+                    }
+                    if (previousInvoice.bill_number) {
+                        pdfParams.set("previous_bill_no", String(previousInvoice.bill_number));
+                    }
+                    if (previousInvoice.visit_date) {
+                        pdfParams.set("previous_visit_date", String(previousInvoice.visit_date));
+                    }
+                    const previousPaymentStatus = String((previousInvoice.payment && previousInvoice.payment.status) || "").toUpperCase();
+                    if (previousPaymentStatus) {
+                        pdfParams.set("previous_payment_status", previousPaymentStatus);
+                    }
+                }
+                const pdfHref = pdfParams.toString() ? `${pdfUrl}?${pdfParams.toString()}` : pdfUrl;
+                html += `<a href='${escapeHtml(pdfHref)}' class='btn-link'>Download PDF</a>`;
+            }
+            html += "</div>";
+            html += "</div>";
+
+            html += "<hr style='margin:0.9rem 0; border:none; border-top:1px solid #d9e4f5;'>";
+            html += `<strong>Patient:</strong> ${escapeHtml(patient.name)} | ${escapeHtml(patient.phone)}<br>`;
+            html += `<strong>Doctor:</strong> ${escapeHtml(doctor.name)} (${escapeHtml(doctor.specialty)})`;
+            html += `<br><strong>Payment Status:</strong> ${paymentStatusBadge} | <strong>Method:</strong> ${escapeHtml(payment.method || "-")}`;
+            if (payment.paid_at) {
+                html += `<br><strong>Paid At:</strong> ${escapeHtml(payment.paid_at)}`;
+            }
+            if (previousInvoice) {
+                const prevStatus = String((previousInvoice.payment && previousInvoice.payment.status) || "PENDING").toUpperCase();
+                html += `<br><strong>History:</strong> Copied from Bill ${escapeHtml(previousInvoice.bill_number || "-")} (Invoice ID ${escapeHtml(previousInvoice.invoice_id || "-")})`;
+                html += ` | <strong>Previous Payment Status:</strong> ${escapeHtml(prevStatus)}`;
+            }
+
+            html += "<table style='width:100%; border-collapse:collapse; margin-top:0.9rem;'>";
+            html += "<thead><tr style='background:#dce8ff; font-weight:600;'>";
+            html += "<th style='border:1px solid #c6d7fa; padding:8px; text-align:left;'>Description</th>";
+            html += "<th style='border:1px solid #c6d7fa; padding:8px; text-align:left;'>Type</th>";
+            html += "<th style='border:1px solid #c6d7fa; padding:8px; text-align:right;'>Amount</th>";
+            html += "</tr></thead><tbody>";
+
+            if (!lineItems.length) {
+                html += "<tr><td colspan='3' style='border:1px solid #c6d7fa; padding:8px;'>No line items.</td></tr>";
+            } else {
+                html += lineItems.map((item) => (
+                    "<tr>" +
+                    `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.description)}</td>` +
+                    `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.line_type)}</td>` +
+                    `<td style='border:1px solid #c6d7fa; padding:8px; text-align:right;'>${escapeHtml(formatSignedAmount(item.amount))}</td>` +
+                    "</tr>"
+                )).join("");
+            }
+
+            html += "</tbody></table>";
+
+            html += "<div style='margin-top:0.9rem; display:grid; gap:0.3rem; justify-content:end;'>";
+            html += `<div><strong>Subtotal:</strong> ${escapeHtml(formatSignedAmount(totals.subtotal))}</div>`;
+            html += `<div><strong>Discount:</strong> ${escapeHtml(formatSignedAmount(totals.discount))}</div>`;
+            html += `<div><strong>Tax:</strong> ${escapeHtml(formatSignedAmount(totals.tax))}</div>`;
+            html += `<div><strong>Total:</strong> ${escapeHtml(formatSignedAmount(totals.total))}</div>`;
+            html += `<div><strong>Recovered:</strong> ${escapeHtml(formatSignedAmount(totals.recovered_amount || payment.recovered_amount || 0))}</div>`;
+            html += `<div><strong>Pending:</strong> ${escapeHtml(formatSignedAmount(totals.pending_amount || payment.pending_amount || 0))}</div>`;
+            html += "</div>";
+
+            return html;
+        }
+
+        async function fetchInvoiceById(invoiceId) {
+            if (!invoiceId) {
+                return null;
+            }
+            const invoiceRes = await fetch(`/api/billing/invoice/${encodeURIComponent(invoiceId)}/`, {
+                credentials: "same-origin",
+            });
+            const invoiceData = await invoiceRes.json().catch(() => ({}));
+            if (!invoiceRes.ok) {
+                return null;
+            }
+            return invoiceData.data || null;
+        }
+
+        async function cloneInvoiceToLedger(previousInvoiceId, ledgerId, resultBox) {
+            const previousInvoice = await fetchInvoiceById(previousInvoiceId);
+            if (!previousInvoice) {
+                resultBox.className = "result-box result-error";
+                resultBox.textContent = "Unable to load previous invoice details for FOLLOW_UP_RCT.";
+                return { ok: false };
+            }
+
+            const lineItems = Array.isArray(previousInvoice.line_items) ? previousInvoice.line_items : [];
+            for (const item of lineItems) {
+                const payload = new URLSearchParams({
+                    line_type: item.line_type || "",
+                    amount: item.amount || "",
+                    description: item.description || "",
+                });
+                if (item.total_case_amount) {
+                    payload.set("total_case_amount", String(item.total_case_amount));
+                }
+                if (item.recovery_stage_percent !== null && item.recovery_stage_percent !== undefined) {
+                    payload.set("recovery_stage_percent", String(item.recovery_stage_percent));
+                }
+                if (item.sitting_number !== null && item.sitting_number !== undefined) {
+                    payload.set("sitting_number", String(item.sitting_number));
+                }
+                if (item.total_sittings !== null && item.total_sittings !== undefined) {
+                    payload.set("total_sittings", String(item.total_sittings));
+                }
+
+                const addRes = await fetch(`/api/billing/ledger/${ledgerId}/line-items/`, {
+                    method: "POST",
+                    headers: {
+                        "X-CSRFToken": getCSRFToken(),
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    },
+                    body: payload,
+                    credentials: "same-origin",
+                });
+                const addData = await addRes.json().catch(() => ({}));
+
+                if (!addRes.ok && addData.error !== "opd_new_fee_already_present") {
+                    resultBox.className = "result-box result-error";
+                    resultBox.textContent = (addData && addData.error) || "Unable to copy previous invoice items to new ledger.";
+                    return { ok: false };
+                }
+            }
+
+            return {
+                ok: true,
+                previousInvoice,
+            };
+        }
+
+        async function createOrGetBillingLedger(formData, resultBox) {
+            const opdNumber = formData.get("opd_number") || "";
+            if (!opdNumber) {
+                resultBox.className = "result-box result-error";
+                resultBox.textContent = "Patient OPD Number is required.";
+                return null;
+            }
+
+            const visitType = String(document.querySelector('#appointmentBookForm select[name="visit_type"]')?.value || "").toUpperCase();
+            if (visitType === "FOLLOW_UP_RCT") {
+                const previousLedgerRes = await fetch(`/api/billing/ledger/by-opd/?opd_number=${encodeURIComponent(opdNumber)}`, {
+                    credentials: "same-origin",
+                });
+                const previousLedgerData = await previousLedgerRes.json().catch(() => ({}));
+                if (!previousLedgerRes.ok) {
+                    const previousLedgerError = {
+                        ledger_not_found: "Previous invoice not found for this OPD. FOLLOW_UP_RCT needs a prior billed visit.",
+                    }[previousLedgerData.error] || previousLedgerData.error || "Unable to load previous billing ledger for FOLLOW_UP_RCT.";
+                    resultBox.className = "result-box result-error";
+                    resultBox.textContent = previousLedgerError;
+                    return null;
+                }
+
+                const previousInvoiceId = previousLedgerData.data && previousLedgerData.data.invoice
+                    ? previousLedgerData.data.invoice.invoice_id
+                    : null;
+                if (!previousInvoiceId) {
+                    resultBox.className = "result-box result-error";
+                    resultBox.textContent = "Previous billed invoice is required before generating FOLLOW_UP_RCT invoice.";
+                    return null;
+                }
+
+                const ledgerPayload = new URLSearchParams({
+                    opd_number: opdNumber,
+                    appointment_id: formData.get("appointment_id") || "",
+                });
+
+                const ledgerRes = await fetch("/api/billing/ledger/by-opd/create/", {
+                    method: "POST",
+                    headers: {
+                        "X-CSRFToken": getCSRFToken(),
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    },
+                    body: ledgerPayload,
+                    credentials: "same-origin",
+                });
+                const ledgerData = await ledgerRes.json().catch(() => ({}));
+
+                if (!ledgerRes.ok) {
+                    const errorMessage = {
+                        appointment_not_found: "Appointment ID not found for this OPD. Leave Appointment ID empty or enter a valid one.",
+                        opd_number_required: "Patient OPD Number is required.",
+                        opd_number_mismatch: "Appointment ID does not belong to this OPD number.",
+                    }[ledgerData.error] || ledgerData.error || "Unable to create billing ledger for FOLLOW_UP_RCT.";
+                    resultBox.className = "result-box result-error";
+                    resultBox.textContent = errorMessage;
+                    return null;
+                }
+
+                const existingLedgerId = ledgerData.data && ledgerData.data.ledger_id;
+                if (!existingLedgerId) {
+                    resultBox.className = "result-box result-error";
+                    resultBox.textContent = "Ledger created but ledger ID missing in response.";
+                    return null;
+                }
+
+                return {
+                    ledgerId: existingLedgerId,
+                    ledgerData,
+                    previousInvoiceId,
+                };
+            }
+
+            const ledgerPayload = new URLSearchParams({
+                opd_number: opdNumber,
+                appointment_id: formData.get("appointment_id") || "",
+            });
+
+            const ledgerRes = await fetch("/api/billing/ledger/by-opd/create/", {
+                method: "POST",
+                headers: {
+                    "X-CSRFToken": getCSRFToken(),
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                body: ledgerPayload,
+                credentials: "same-origin",
+            });
+            const ledgerData = await ledgerRes.json().catch(() => ({}));
+
+            if (!ledgerRes.ok) {
+                const errorMessage = {
+                    appointment_not_found: "Appointment ID not found for this OPD. Leave Appointment ID empty or enter a valid one.",
+                    opd_number_required: "Patient OPD Number is required.",
+                    opd_number_mismatch: "Appointment ID does not belong to this OPD number.",
+                }[ledgerData.error] || ledgerData.error || "Unable to create/open billing ledger.";
+                resultBox.className = "result-box result-error";
+                resultBox.textContent = errorMessage;
+                return null;
+            }
+
+            const ledgerId = ledgerData.data && ledgerData.data.ledger_id;
+            if (!ledgerId) {
+                resultBox.className = "result-box result-error";
+                resultBox.textContent = "Ledger created but ledger ID missing in response.";
+                return null;
+            }
+            return {
+                ledgerId,
+                ledgerData,
+            };
+        }
+
+        async function addOpdFeeLineItem(ledgerId, formData, resultBox) {
+            const visitType = String(document.querySelector('#appointmentBookForm select[name="visit_type"]')?.value || "").toUpperCase();
+            if (visitType === "FOLLOW_UP_RCT") {
+                return { ok: true, alreadyPresent: true, skipped: true };
+            }
+
+            const lineItemPayload = new URLSearchParams({
+                line_type: "OPD_REPEAT_FEE",
+                amount: formData.get("amount") || "",
+                description: formData.get("description") || "OPD Existing Patient Fee",
+            });
+
+            const lineItemRes = await fetch(`/api/billing/ledger/${ledgerId}/line-items/`, {
+                method: "POST",
+                headers: {
+                    "X-CSRFToken": getCSRFToken(),
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                body: lineItemPayload,
+                credentials: "same-origin",
+            });
+            const lineItemData = await lineItemRes.json().catch(() => ({}));
+
+            if (lineItemRes.ok) {
+                return { ok: true, alreadyPresent: false };
+            }
+
+            if (lineItemData.error === "opd_new_fee_already_present") {
+                return { ok: true, alreadyPresent: true };
+            }
+
+            const errorMessage = {
+                invalid_amount: "Please enter a valid OPD fee amount.",
+                ledger_finalized: "Ledger already finalized. OPD fee cannot be added.",
+                ledger_not_found: "Billing ledger not found.",
+            }[lineItemData.error] || lineItemData.error || "Unable to add OPD fee.";
+            resultBox.className = "result-box result-error";
+            resultBox.textContent = errorMessage;
+            return { ok: false, alreadyPresent: false, errorCode: lineItemData.error || "unknown_error" };
+        }
+
+        document.getElementById("appointmentBillingGetInvoiceBtn").addEventListener("click", async () => {
+            const form = document.getElementById("appointmentBillingForm");
+            const resultBox = document.getElementById("appointmentBillingResult");
+            const invoiceResultBox = document.getElementById("appointmentBillingInvoiceResult");
+
+            if (billingDisabledForRctFollowUp) {
+                resultBox.className = "result-box result-error";
+                resultBox.textContent = "Billing option is disabled for FOLLOW_UP when RCT has started. Continue with the existing invoice ledger.";
+                return;
+            }
+
+            resultBox.className = "result-box";
+            resultBox.textContent = "Generating invoice...";
+            invoiceResultBox.className = "result-box";
+            invoiceResultBox.textContent = "";
+
+            const formData = new FormData(form);
+            const ledgerResult = await createOrGetBillingLedger(formData, resultBox);
+            if (!ledgerResult) {
+                return;
+            }
+            const visitType = String(document.querySelector('#appointmentBookForm select[name="visit_type"]')?.value || "").toUpperCase();
+            const isFollowUpRct = visitType === "FOLLOW_UP_RCT";
+            const ledgerId = ledgerResult.ledgerId;
+            const initialInvoiceId = ledgerResult.ledgerData && ledgerResult.ledgerData.data && ledgerResult.ledgerData.data.invoice
+                ? ledgerResult.ledgerData.data.invoice.invoice_id
+                : null;
+            let previousInvoiceForHistory = null;
+
+            let invoiceId = initialInvoiceId;
+
+            if (isFollowUpRct && !invoiceId) {
+                const previousInvoiceId = ledgerResult.previousInvoiceId;
+                if (!previousInvoiceId) {
+                    resultBox.className = "result-box result-error";
+                    resultBox.textContent = "Previous billed invoice is required before FOLLOW_UP_RCT billing.";
+                    return;
+                }
+
+                resultBox.className = "result-box";
+                resultBox.textContent = "Copying previous invoice values...";
+
+                const cloneResult = await cloneInvoiceToLedger(previousInvoiceId, ledgerId, resultBox);
+                if (!cloneResult.ok) {
+                    return;
+                }
+                previousInvoiceForHistory = cloneResult.previousInvoice;
+
+                const previousTotals = (previousInvoiceForHistory && previousInvoiceForHistory.totals) || {};
+                const finalizePayload = new URLSearchParams({
+                    tax: String(previousTotals.tax || "0"),
+                    discount: String(previousTotals.discount || "0"),
+                });
+                const finalizeRes = await fetch(`/api/billing/ledger/${ledgerId}/finalize/`, {
+                    method: "POST",
+                    headers: {
+                        "X-CSRFToken": getCSRFToken(),
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    },
+                    body: finalizePayload,
+                    credentials: "same-origin",
+                });
+                const finalizeData = await finalizeRes.json().catch(() => ({}));
+
+                if (!finalizeRes.ok) {
+                    const errorMessage = {
+                        mandatory_new_opd_fee_missing: "Copied invoice is missing OPD fee. Please verify previous invoice setup.",
+                        ledger_not_found: "Billing ledger not found.",
+                    }[finalizeData.error] || finalizeData.error || "Unable to finalize copied FOLLOW_UP_RCT invoice.";
+                    resultBox.className = "result-box result-error";
+                    resultBox.textContent = errorMessage;
+                    return;
+                }
+
+                invoiceId = finalizeData.data && finalizeData.data.invoice_id;
+            }
+
+            if (!invoiceId && !isFollowUpRct) {
+                const feeResult = await addOpdFeeLineItem(ledgerId, formData, resultBox);
+                if (!feeResult.ok) {
+                    if (feeResult.errorCode === "ledger_finalized") {
+                        const latestLedgerRes = await fetch(`/api/billing/ledger/by-opd/?opd_number=${encodeURIComponent(formData.get("opd_number") || "")}`, {
+                            credentials: "same-origin",
+                        });
+                        const latestLedgerData = await latestLedgerRes.json().catch(() => ({}));
+                        const existingInvoiceId = latestLedgerRes.ok && latestLedgerData.data && latestLedgerData.data.invoice
+                            ? latestLedgerData.data.invoice.invoice_id
+                            : null;
+                        if (existingInvoiceId) {
+                            invoiceId = existingInvoiceId;
+                        } else {
+                            return;
+                        }
+                    } else {
+                        return;
+                    }
+                }
+            }
+
+            if (!invoiceId) {
+                const finalizePayload = new URLSearchParams({
+                    tax: "0",
+                    discount: "0",
+                });
+                const finalizeRes = await fetch(`/api/billing/ledger/${ledgerId}/finalize/`, {
+                    method: "POST",
+                    headers: {
+                        "X-CSRFToken": getCSRFToken(),
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    },
+                    body: finalizePayload,
+                    credentials: "same-origin",
+                });
+                const finalizeData = await finalizeRes.json().catch(() => ({}));
+
+                if (finalizeRes.ok) {
+                    invoiceId = finalizeData.data && finalizeData.data.invoice_id;
+                } else if (finalizeData.error === "ledger_finalized") {
+                    const ledgerGetRes = await fetch(`/api/billing/ledger/by-opd/?opd_number=${encodeURIComponent(formData.get("opd_number") || "")}`, {
+                        credentials: "same-origin",
+                    });
+                    const ledgerGetData = await ledgerGetRes.json().catch(() => ({}));
+                    invoiceId = ledgerGetRes.ok && ledgerGetData.data && ledgerGetData.data.invoice
+                        ? ledgerGetData.data.invoice.invoice_id
+                        : null;
+                } else {
+                    const errorMessage = {
+                        mandatory_new_opd_fee_missing: "Please add OPD fee before finalizing bill.",
+                        ledger_not_found: "Billing ledger not found.",
+                    }[finalizeData.error] || finalizeData.error || "Unable to finalize bill.";
+                    resultBox.className = "result-box result-error";
+                    resultBox.textContent = errorMessage;
+                    return;
+                }
+            }
+
+            if (!invoiceId) {
+                resultBox.className = "result-box result-error";
+                resultBox.textContent = "Unable to resolve invoice ID for this OPD.";
+                return;
+            }
+
+            invoiceResultBox.className = "result-box";
+            invoiceResultBox.textContent = "Loading invoice...";
+
+            const invoiceRes = await fetch(`/api/billing/invoice/${encodeURIComponent(invoiceId)}/`, {
+                credentials: "same-origin",
+            });
+            const invoiceData = await invoiceRes.json().catch(() => ({}));
+
+            if (!invoiceRes.ok) {
+                const errorMessage = {
+                    invoice_not_found: "Invoice not found. Please verify Invoice ID.",
+                }[invoiceData.error] || invoiceData.error || "Unable to fetch invoice.";
+                invoiceResultBox.className = "result-box result-error";
+                invoiceResultBox.textContent = errorMessage;
+                return;
+            }
+
+            const invoicePayload = invoiceData.data || {};
+            resultBox.className = "result-box result-success";
+            resultBox.textContent = initialInvoiceId
+                ? `Existing invoice loaded. Invoice ID: ${invoicePayload.invoice_id || invoiceId}`
+                : `Invoice ready. Invoice ID: ${invoicePayload.invoice_id || invoiceId}`;
+            invoiceResultBox.className = "result-box result-success";
+            invoiceResultBox.innerHTML = renderInvoiceCard(invoicePayload, {
+                isFollowUpRct,
+                previousInvoice: previousInvoiceForHistory,
+            });
+        });
 
         setDefaultSlotDate();
         loadDoctors();
-        loadReceptionTodayQueueBoard();
-        setInterval(loadReceptionTodayQueueBoard, 5000);
+        toggleEmergencyBookingMode();
+        applyBookingPrefillFromQuery();
+        updateBillingOptionState();
+        loadDayRescheduleAlerts();
+        setInterval(loadDayRescheduleAlerts, 5000);
     </script>
 </div>
 {% endblock %}

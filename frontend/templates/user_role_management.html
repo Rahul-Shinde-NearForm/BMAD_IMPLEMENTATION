@@ -1,143 +1,335 @@
-<!doctype html>
-<html lang="en">
+{% extends "base.html" %}
 
-<head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>User and Role Management</title>
-    <link rel="stylesheet" href="/static/css/app.css" />
+{% block title %}Admin Configuration - OPD Management System{% endblock %}
+{% block page_title %}Admin Configuration{% endblock %}
+
+{% block content %}
+<div class="container">
     <style>
-        .doctor-profile-panel {
-            display: none;
-            margin-top: 12px;
-            border: 1px solid #ddd;
-            padding: 12px;
+        .admin-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+            align-items: start;
+            margin-top: 16px;
         }
 
-        .doctor-profile-panel.open {
+        .admin-card {
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 16px;
+            background: #fafafa;
+        }
+
+        .admin-card h2 {
+            margin-top: 0;
+            font-size: 15px;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 8px;
+            margin-bottom: 12px;
+        }
+
+        .admin-card label {
             display: block;
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+
+        .admin-card input[type="text"],
+        .admin-card input[type="email"],
+        .admin-card input[type="password"],
+        .admin-card input[type="number"],
+        .admin-card input[type="file"],
+        .admin-card select,
+        .admin-card textarea {
+            width: 100%;
+            box-sizing: border-box;
+            margin-top: 2px;
+            font-size: 13px;
+        }
+
+        .admin-card fieldset {
+            border: 1px solid #ddd;
+            padding: 10px;
+            margin-top: 8px;
+        }
+
+        .admin-card fieldset legend {
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .admin-card button[type="submit"] {
+            margin-top: 10px;
+            width: 100%;
+        }
+
+        .danger-card {
+            border-color: #f2c6c6;
+            background: #fff6f6;
+        }
+
+        .danger-card h2 {
+            color: #9f1d1d;
+            border-bottom-color: #efc2c2;
+        }
+
+        .danger-note {
+            font-size: 12px;
+            color: #8b1e1e;
+            margin: 0 0 8px 0;
+        }
+
+        .danger-card button[type="submit"] {
+            background: #b91c1c;
+            border-color: #b91c1c;
+            color: #fff;
+        }
+
+        @media (max-width: 1100px) {
+            .admin-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 600px) {
+            .admin-grid {
+                grid-template-columns: 1fr;
+            }
         }
     </style>
-</head>
 
-<body>
-    <main class="container">
-        <h1>Admin Configuration</h1>
-        <p>Configure clinic details, create users, assign roles, and define doctor profile defaults for prescription.
-        </p>
-        {% if message %}
-        <p class="{% if status == 'success' %}notice-success{% else %}notice-error{% endif %}">{{ message }}</p>
-        {% endif %}
+    <p>Configure clinic details, create users, assign roles, and define doctor profile defaults for prescription.</p>
+    {% if message %}
+    {% if status == 'success' %}
+    <p class="notice-success">{{ message }}</p>
+    {% else %}
+    <p class="notice-error">{{ message }}</p>
+    {% endif %}
+    {% endif %}
 
-        <section>
+    <div class="admin-grid">
+
+        <div class="admin-card">
             <h2>Clinic Details</h2>
-            <form method="post" action="/api/admin/clinic-settings/update/">
+            <form method="post" action="/api/admin/clinic-settings/update/" enctype="multipart/form-data">
                 {% csrf_token %}
-                <p><label>Clinic Name <input type="text" name="clinic_name" value="{{ clinic_name }}"
-                            required /></label></p>
-                <p><label>Clinic Address <textarea name="clinic_address"
-                            rows="3">{{ clinic_address }}</textarea></label></p>
+                <label>Clinic Name
+                    <input type="text" name="clinic_name" value="{{ clinic_name }}" required />
+                </label>
+                <label>Clinic Address
+                    <textarea name="clinic_address" rows="3">{{ clinic_address }}</textarea>
+                </label>
+                <label>Clinic Phone (Landline)
+                    <input type="text" name="clinic_phone" value="{{ clinic_phone }}"
+                        placeholder="e.g., +91-20-1234-5678" />
+                </label>
+                <label>Clinic Mobile
+                    <input type="text" name="clinic_mob" value="{{ clinic_mob }}" placeholder="e.g., +91-9876543210" />
+                </label>
+                <label>UPI ID (for QR code generation)
+                    <input type="text" name="upi_id" value="{{ upi_id }}"
+                        placeholder="e.g., clinic@upi or 9876543210@ybl" />
+                </label>
+                <label>Clinic Logo
+                    <input type="file" name="logo" accept="image/*" />
+                </label>
+                {% if logo_url %}
+                <small>Current logo: <a href="{{ logo_url }}" target="_blank">View</a></small>
+                {% endif %}
+                <label>Registration Number
+                    <input type="text" name="registration_number" value="{{ registration_number }}" />
+                </label>
+                <label>Registration Authority
+                    <input type="text" name="registration_authority" value="{{ registration_authority }}"
+                        placeholder="e.g., State Medical Council" />
+                </label>
                 <button type="submit">Save Clinic Settings</button>
             </form>
-        </section>
+        </div>
 
-        <section>
+        <div class="admin-card">
             <h2>Create User</h2>
             <form method="post" action="/api/users/create/" id="createUserForm">
                 {% csrf_token %}
-                <p><label>Username <input type="text" name="username" required /></label></p>
-                <p><label>Password <input type="password" name="password" required /></label></p>
-                <p><label>First Name <input type="text" name="first_name" /></label></p>
-                <p><label>Last Name <input type="text" name="last_name" /></label></p>
-                <p><label>Email <input type="email" name="email" /></label></p>
-
-                <p>
-                    <label>
-                        <input type="checkbox" id="includeDoctorProfileToggle" />
-                        Add doctor profile details
-                    </label>
-                </p>
-
-                <fieldset class="doctor-profile-panel" id="doctorProfilePanel">
-                    <legend>Doctor Profile Defaults</legend>
-                    <p style="margin-top:0;">Fill these only if you will assign the Doctor role after creating the user.
-                    </p>
-                    <p><label>Doctor Full Name <input type="text" name="doctor_full_name"
-                                placeholder="Rahul Sharma" /></label></p>
-                    <p><label>Suffix <input type="text" name="doctor_suffix" value="Dr" /></label></p>
-                    <p><label>Phone <input type="text" name="doctor_phone" placeholder="9876543210" /></label></p>
-                    <p><label>Specialty <input type="text" name="doctor_specialty"
-                                placeholder="General Medicine" /></label></p>
-                    <p><label>Registration Number <input type="text" name="doctor_reg_number" /></label></p>
-                    <p><label>Qualification (for prescription) <input type="text" name="doctor_qualification"
-                                placeholder="MBBS, MD" /></label></p>
-                    <p><label>Daily Patient Capacity <input type="number" name="doctor_daily_patient_capacity" min="1"
-                                value="50" /></label></p>
-                </fieldset>
-
+                <label>Username
+                    <input type="text" name="username" required />
+                </label>
+                <label>Password
+                    <input type="password" name="password" required />
+                </label>
+                <label>First Name
+                    <input type="text" name="first_name" />
+                </label>
+                <label>Last Name
+                    <input type="text" name="last_name" />
+                </label>
+                <label>Email
+                    <input type="email" name="email" />
+                </label>
                 <button type="submit">Create User</button>
             </form>
-        </section>
+        </div>
 
-        <section>
+        <div class="admin-card">
             <h2>Assign Role</h2>
             <form method="post" action="/api/users/assign-role/">
                 {% csrf_token %}
-                <p>
-                    <label>User
-                        <select name="user_id" required>
-                            {% for user in users %}
-                            <option value="{{ user.id }}">{{ user.username }}</option>
-                            {% endfor %}
-                        </select>
-                    </label>
-                </p>
-                <p>
-                    <label>Role
-                        <select name="role" required>
-                            {% for role in roles %}
-                            <option value="{{ role }}">{{ role }}</option>
-                            {% endfor %}
-                        </select>
-                    </label>
-                </p>
+                <label>User
+                    <select name="user_id" required>
+                        {% for user in users %}
+                        <option value="{{ user.id }}">{{ user.username }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label>Role
+                    <select name="role" required>
+                        {% for role in roles %}
+                        <option value="{{ role }}">{{ role }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
                 <button type="submit">Assign Role</button>
             </form>
-        </section>
+        </div>
 
-        <section>
-            <h2>Current Users</h2>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Username</th>
-                        <th>Assigned Roles</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for user in users %}
-                    <tr>
-                        <td>{{ user.username }}</td>
-                        <td>{% if user.roles %}{{ user.roles|join:", " }}{% else %}None{% endif %}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </section>
+        <div class="admin-card">
+            <h2>Set Doctor Profile</h2>
+            <form method="post" action="/api/admin/doctor-profile/update/" id="doctorProfileForm">
+                {% csrf_token %}
+                <label>Doctor User
+                    <select name="doctor_user_id" id="doctorUserSelect">
+                        <option value="">-- Select Doctor --</option>
+                        {% for user in users %}
+                        <option value="{{ user.id }}">{{ user.username }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <fieldset>
+                    <legend>Doctor Profile Details</legend>
+                    <label>Full Name
+                        <input type="text" name="doctor_full_name" placeholder="Rahul Sharma" />
+                    </label>
+                    <label>Suffix
+                        <input type="text" name="doctor_suffix" value="Dr" />
+                    </label>
+                    <label>Phone
+                        <input type="text" name="doctor_phone" placeholder="9876543210" />
+                    </label>
+                    <label>Specialty
+                        <input type="text" name="doctor_specialty" placeholder="General Medicine" />
+                    </label>
+                    <label>Registration Number
+                        <input type="text" name="doctor_reg_number" />
+                    </label>
+                    <label>Qualification
+                        <input type="text" name="doctor_qualification" placeholder="MBBS, MD" />
+                    </label>
+                    <label>Daily Patient Capacity
+                        <input type="number" name="doctor_daily_patient_capacity" min="1" value="50" />
+                    </label>
+                    <label>OPD Fee - New Patient (Rs)
+                        <input type="number" name="doctor_opd_new_patient_fee" min="0" step="0.01" value="200.00" />
+                    </label>
+                    <label>OPD Fee - Existing Patient (Rs)
+                        <input type="number" name="doctor_opd_existing_patient_fee" min="0" step="0.01"
+                            value="100.00" />
+                    </label>
+                </fieldset>
+                <button type="submit">Save Doctor Profile</button>
+            </form>
+        </div>
 
-        <p><button class="btn-link" onclick="window.location.href = document.referrer || '/'">&#8592; Back</button></p>
-    </main>
+        <div class="admin-card danger-card">
+            <h2>Danger Zone: Reset Software</h2>
+            <p class="danger-note">This performs a full database reset (flush): all records including users, roles, and
+                sessions are deleted. The current admin account is auto-restored with the same credentials after reset.
+            </p>
+            <form method="post" action="/api/admin/software/reset/"
+                onsubmit="return confirm('This will permanently delete ALL database records, including users and roles. Continue?');">
+                {% csrf_token %}
+                <label>Type RESET to confirm
+                    <input type="text" name="confirm_text" placeholder="RESET" required />
+                </label>
+                <button type="submit">Full Reset (Flush Database)</button>
+            </form>
+        </div>
 
-    <script>
-        const doctorProfileToggle = document.getElementById('includeDoctorProfileToggle');
-        const doctorProfilePanel = document.getElementById('doctorProfilePanel');
+    </div>
 
-        if (doctorProfileToggle && doctorProfilePanel) {
-            doctorProfileToggle.addEventListener('change', () => {
-                doctorProfilePanel.classList.toggle('open', doctorProfileToggle.checked);
-            });
-        }
-    </script>
-</body>
+    <section style="margin-top: 24px;">
+        <h2>Current Users</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>Assigned Roles</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in users %}
+                <tr>
+                    <td>{{ user.username }}</td>
+                    <td>
+                        {% if user.roles %}
+                        {{ user.roles|join:", " }}
+                        {% else %}
+                        None
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if user.id != current_user_id %}
+                        <form method="post" action="/api/users/delete/"
+                            onsubmit="return confirm('Delete user {{ user.username }}? This action cannot be undone.');"
+                            style="margin:0;">
+                            {% csrf_token %}
+                            <input type="hidden" name="user_id" value="{{ user.id }}" />
+                            <button type="submit" style="width:auto;">Delete User</button>
+                        </form>
+                        {% else %}
+                        <small>Current user</small>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
 
-</html>
+    <section style="margin-top: 24px;">
+        <h2>Current Roles</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Role</th>
+                    <th>Users Assigned</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for role in role_rows %}
+                <tr>
+                    <td>{{ role.name }}</td>
+                    <td>{{ role.user_count }}</td>
+                    <td>
+                        {% if role.name != "Admin" %}
+                        <form method="post" action="/api/roles/delete/"
+                            onsubmit="return confirm('Delete role {{ role.name }}? This will remove role assignment from all users.');"
+                            style="margin:0;">
+                            {% csrf_token %}
+                            <input type="hidden" name="role" value="{{ role.name }}" />
+                            <button type="submit" style="width:auto;">Delete Role</button>
+                        </form>
+                        {% else %}
+                        <small>Protected</small>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
+
+</div>
+{% endblock %}

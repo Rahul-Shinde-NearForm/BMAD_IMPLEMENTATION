@@ -1,9 +1,10 @@
-from django.contrib.auth.models import Group, Permission
+from django.contrib.auth.models import Group, Permission, User
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from datetime import datetime, timedelta
 from decimal import Decimal
+import re
 
 from .models import (
     Appointment,
@@ -19,6 +20,7 @@ from .models import (
     ClinicSettings,
     ConsultationAmendment,
     Doctor,
+    DoctorDayRescheduleRequest,
     MedicalOrder,
     Prescription,
     QueueEvent,
@@ -50,7 +52,9 @@ APPOINTMENT_TRANSITIONS = {
 
 QUEUE_TRANSITIONS = {
     "WAITING": {"SKIPPED", "NO_SHOW", "COMPLETED", "CALLED"},
-    "CALLED": {"SKIPPED", "NO_SHOW", "COMPLETED"},
+    "CALLED": {"SKIPPED", "NO_SHOW", "COMPLETED", "PAUSED"},
+    "PAUSED": {"RESUMED", "COMPLETED", "SKIPPED"},
+    "RESUMED": {"COMPLETED", "SKIPPED", "NO_SHOW"},
     "SKIPPED": {"CALLED", "NO_SHOW", "COMPLETED"},
     "COMPLETED": set(),
     "NO_SHOW": set(),
@@ -154,13 +158,20 @@ def generate_slots_for_day(slot_date, start_time, end_time, break_start, break_e
 
 @transaction.atomic
 def upsert_doctor_schedule(data, actor_username):
-    doctor, _ = Doctor.objects.get_or_create(
-        full_name=data["doctor_name"],
-        defaults={
-            "specialty": data["specialty"],
-            "daily_patient_capacity": data.get("daily_patient_capacity") or 50,
-        },
-    )
+    raw_name = (data.get("doctor_name") or "").strip()
+    normalized_name = re.sub(r"^dr\.?\s+", "", raw_name, flags=re.IGNORECASE).strip()
+    lookup_name = normalized_name or raw_name
+
+    doctor = Doctor.objects.filter(full_name=raw_name).first()
+    if doctor is None and lookup_name:
+        doctor = Doctor.objects.filter(full_name=lookup_name).first()
+
+    if doctor is None:
+        doctor = Doctor.objects.create(
+            full_name=lookup_name,
+            specialty=data["specialty"],
+            daily_patient_capacity=data.get("daily_patient_capacity") or 50,
+        )
     if doctor.specialty != data["specialty"]:
         doctor.specialty = data["specialty"]
         doctor.save(update_fields=["specialty"])
@@ -345,6 +356,13 @@ def reschedule_appointment(appointment, data, actor_username):
     appointment.start_time = start_time
     appointment.end_time = end_time
     appointment.status = target_status
+    
+    # Handle emergency flag if provided
+    if data.get("is_emergency"):
+        appointment.is_emergency = True
+        appointment.marked_emergency_at = timezone.now()
+        appointment.marked_emergency_by_id = User.objects.filter(username=actor_username).first().id if actor_username else None
+    
     appointment.save()
 
     AppointmentEvent.objects.create(
@@ -451,10 +469,27 @@ def doctor_appointments_for_day(doctor_id, for_date):
 
 def tomorrow_reminder_report(doctor_id=None):
     target_date = timezone.localdate() + timedelta(days=1)
-    qs = Appointment.objects.select_related("patient", "doctor").filter(slot_date=target_date).exclude(status="CANCELLED")
+    qs = (
+        Appointment.objects.select_related("patient", "doctor")
+        .prefetch_related("events")
+        .filter(slot_date=target_date)
+        .exclude(status="CANCELLED")
+    )
     if doctor_id:
         qs = qs.filter(doctor_id=doctor_id)
     qs = qs.order_by("doctor__full_name", "start_time")
+    return target_date, list(qs)
+
+
+def yesterday_missed_report(doctor_id=None):
+    target_date = timezone.localdate() - timedelta(days=1)
+    qs = (
+        QueueItem.objects.select_related("appointment__patient", "appointment__doctor")
+        .filter(slot_date=target_date, status="NO_SHOW")
+    )
+    if doctor_id:
+        qs = qs.filter(doctor_id=doctor_id)
+    qs = qs.order_by("appointment__doctor__full_name", "appointment__start_time")
     return target_date, list(qs)
 
 
@@ -517,11 +552,16 @@ def _create_queue_event(queue_item, action, previous_status, new_status, actor_u
 
 def list_queue_board(doctor_id, slot_date):
     sync_queue_for_day(doctor_id, slot_date)
-    items = QueueItem.objects.filter(doctor_id=doctor_id, slot_date=slot_date).order_by("token_number")
+    items = (
+        QueueItem.objects.filter(doctor_id=doctor_id, slot_date=slot_date)
+        .select_related("appointment")
+        .order_by("token_number")
+    )
     board = []
     waiting_position = 0
+    status_labels = dict(QueueItem.STATUS_CHOICES)
     for item in items:
-        if item.status in {"WAITING", "CALLED", "SKIPPED"}:
+        if item.status in {"WAITING", "CALLED", "SKIPPED", "PAUSED", "RESUMED"}:
             waiting_position += 1
             estimated_wait_minutes = max(waiting_position - 1, 0) * 10
         else:
@@ -532,6 +572,8 @@ def list_queue_board(doctor_id, slot_date):
                 "appointment_id": item.appointment_id,
                 "token_number": item.token_number,
                 "status": item.status,
+                "status_label": status_labels.get(item.status, item.status),
+                "is_emergency": bool(getattr(item.appointment, "is_emergency", False)),
                 "estimated_wait_minutes": estimated_wait_minutes,
             }
         )
@@ -541,12 +583,41 @@ def list_queue_board(doctor_id, slot_date):
 @transaction.atomic
 def call_next(doctor_id, slot_date, actor_username):
     sync_queue_for_day(doctor_id, slot_date)
+    
+    # Step 1: Check for PAUSED items first (resume them)
+    paused_item = (
+        QueueItem.objects.select_for_update()
+        .filter(doctor_id=doctor_id, slot_date=slot_date, status="PAUSED")
+        .order_by("resume_order_position", "token_number")
+        .first()
+    )
+    
+    if paused_item:
+        # Verify appointment/consultation still valid
+        consultation = Consultation.objects.filter(appointment_id=paused_item.appointment_id).first()
+        if consultation and consultation.status != "FINALIZED":
+            previous = paused_item.status
+            paused_item.status = "RESUMED"
+            paused_item.save(update_fields=["status", "updated_at"])
+            event, payload = _create_queue_event(paused_item, "CALL_NEXT", previous, "RESUMED", actor_username)
+            return paused_item, event, payload
+        else:
+            # Consultation was finalized while paused, skip it
+            paused_item.status = "SKIPPED"
+            paused_item.save(update_fields=["status", "updated_at"])
+            # Recursively try next
+            return call_next(doctor_id, slot_date, actor_username)
+    
+    # Step 2: Get first WAITING item (emergency priority)
+    # Order by: is_emergency DESC (emergencies first), then token_number ASC
     queue_item = (
         QueueItem.objects.select_for_update()
         .filter(doctor_id=doctor_id, slot_date=slot_date, status="WAITING")
-        .order_by("token_number")
+        .select_related("appointment")
+        .order_by("-appointment__is_emergency", "token_number")
         .first()
     )
+    
     if not queue_item:
         raise ValueError("queue_empty")
 
@@ -747,6 +818,15 @@ def issue_prescription(consultation_id, payload, actor_username):
     if not clinic_address:
         clinic_address = ClinicSettings.get_solo().clinic_address
 
+    clinic_settings = ClinicSettings.get_solo()
+    clinic_logo_url = clinic_settings.logo.url if clinic_settings.logo else ""
+    clinic_registration_number = payload.get("clinic_registration_number") or clinic_settings.registration_number
+    clinic_registration_authority = payload.get("clinic_registration_authority") or clinic_settings.registration_authority
+
+    special_instructions = str(payload.get("special_instructions") or "").strip()
+    if not special_instructions:
+        special_instructions = str(consultation.notes or "").strip()
+
     prescription = Prescription.objects.create(
         consultation=consultation,
         patient_id=consultation.patient_id,
@@ -755,19 +835,17 @@ def issue_prescription(consultation_id, payload, actor_username):
         doctor_reg_number=payload.get("doctor_reg_number") or consultation.doctor.reg_number,
         clinic_name=clinic_name,
         clinic_address=clinic_address,
+        clinic_logo_url=clinic_logo_url,
+        clinic_registration_number=clinic_registration_number,
+        clinic_registration_authority=clinic_registration_authority,
         items=items,
         patient_age_at_issue=age,
         patient_weight_kg=weight_kg,
-        special_instructions=payload.get("special_instructions", ""),
+        special_instructions=special_instructions,
         validity_days=payload.get("validity_days", 30),
         rx_number="",   # auto-generated by model.save()
         issued_by=actor_username,
     )
-
-    # Once prescription is issued, the visit is considered complete.
-    appointment = consultation.appointment
-    if appointment.status in {"BOOKED", "RESCHEDULED"}:
-        complete_appointment(appointment, actor_username)
 
     return prescription
 
@@ -791,8 +869,15 @@ def update_prescription(consultation_id, payload, actor_username):
         prescription.clinic_name = payload.get("clinic_name", "")
     if "clinic_address" in payload:
         prescription.clinic_address = payload.get("clinic_address", "")
+    if "clinic_registration_number" in payload:
+        prescription.clinic_registration_number = payload.get("clinic_registration_number", "")
+    if "clinic_registration_authority" in payload:
+        prescription.clinic_registration_authority = payload.get("clinic_registration_authority", "")
     if "special_instructions" in payload:
-        prescription.special_instructions = payload.get("special_instructions", "")
+        special_instructions = str(payload.get("special_instructions") or "").strip()
+        if not special_instructions:
+            special_instructions = str(consultation.notes or "").strip()
+        prescription.special_instructions = special_instructions
     if "validity_days" in payload and payload.get("validity_days"):
         prescription.validity_days = payload.get("validity_days")
 
@@ -1008,18 +1093,102 @@ def _resolve_appointment_for_opd(opd_number: str, appointment_id=None):
     )
 
 
+def get_relevant_billing_ledger_for_opd(opd_number: str, appointment_id=None):
+    """
+    Billing ledger selection policy:
+    1) Prefer same-appointment ledger (open or finalized invoice).
+    2) Else, reuse only OPEN RCT ledger (cross-appointment staged treatment).
+    3) Else, no reusable ledger.
+    """
+    normalized_opd = (opd_number or "").strip()
+    if not normalized_opd:
+        return None
+
+    appointment = _resolve_appointment_for_opd(normalized_opd, appointment_id=appointment_id)
+
+    if appointment is not None:
+        same_appointment_ledger = (
+            BillingLedger.objects
+            .select_related("patient", "doctor")
+            .prefetch_related("line_items")
+            .filter(appointment_id=appointment.id)
+            .order_by("-created_at")
+            .first()
+        )
+        if same_appointment_ledger:
+            return same_appointment_ledger
+
+    open_ledgers = (
+        BillingLedger.objects
+        .select_related("patient", "doctor")
+        .prefetch_related("line_items")
+        .filter(opd_number=normalized_opd, status="OPEN", invoice__isnull=True)
+        .order_by("-created_at")
+    )
+
+    for ledger in open_ledgers:
+        has_rct_line = BillingLineItem.objects.filter(
+            ledger_id=ledger.id,
+            total_case_amount__isnull=False,
+        ).exists()
+        if has_rct_line:
+            return ledger
+
+    return None
+
+
 @transaction.atomic
 def create_or_get_active_billing_ledger(opd_number, actor_username, appointment_id=None):
     if not opd_number:
         raise ValueError("opd_number_required")
 
-    existing = BillingLedger.objects.select_for_update().filter(opd_number=opd_number).first()
-    if existing:
-        return existing, False
-
     appointment = _resolve_appointment_for_opd(opd_number, appointment_id=appointment_id)
     if appointment is None:
         raise ValueError("appointment_not_found")
+
+    existing_same_appointment = (
+        BillingLedger.objects.select_for_update()
+        .filter(appointment_id=appointment.id)
+        .order_by("-created_at")
+        .first()
+    )
+    if existing_same_appointment:
+        return existing_same_appointment, False
+
+    # FOLLOW_UP_RCT should always generate a fresh ledger for the current appointment.
+    if appointment.visit_type == "FOLLOW_UP_RCT":
+        ledger = BillingLedger.objects.create(
+            opd_number=opd_number,
+            appointment=appointment,
+            patient=appointment.patient,
+            doctor=appointment.doctor,
+            visit_date=appointment.slot_date,
+            visit_type=appointment.visit_type,
+            status="OPEN",
+            created_by=actor_username,
+            updated_by=actor_username,
+        )
+        BillingAuditEvent.objects.create(
+            ledger=ledger,
+            action="LEDGER_CREATED",
+            actor_username=actor_username,
+            payload={"opd_number": opd_number, "appointment_id": appointment.id, "source": "follow_up_rct"},
+        )
+        return ledger, True
+
+    open_ledgers = (
+        BillingLedger.objects.select_for_update()
+        .filter(opd_number=opd_number, status="OPEN", invoice__isnull=True)
+        .order_by("-created_at")
+    )
+
+    for ledger in open_ledgers:
+        has_rct_line = BillingLineItem.objects.filter(
+            ledger_id=ledger.id,
+            total_case_amount__isnull=False,
+        ).exists()
+        if has_rct_line:
+            return ledger, False
 
     ledger = BillingLedger.objects.create(
         opd_number=opd_number,
@@ -1042,14 +1211,16 @@ def create_or_get_active_billing_ledger(opd_number, actor_username, appointment_
 
 
 @transaction.atomic
-def add_billing_line_item(ledger_id, line_type, amount, actor_username, description="", source_order_id=""):
+def add_billing_line_item(ledger_id, line_type, amount, actor_username, description="", source_order_id="", 
+                          total_case_amount=None, recovery_stage_percent=None, sitting_number=None, total_sittings=None,
+                          include_opd_fee=True):
     ledger = BillingLedger.objects.select_for_update().get(id=ledger_id)
 
-    if line_type not in {"OPD_NEW_FEE", "OPD_REPEAT_FEE", "MANUAL"}:
+    if line_type not in {"OPD_NEW_FEE", "OPD_REPEAT_FEE", "LAB", "RADIOLOGY", "PHARMACY", "PROCEDURE", "MISC", "MANUAL", "RCT"}:
         raise ValueError("invalid_line_type")
 
     if ledger.status == "FINALIZED":
-        if line_type != "MANUAL":
+        if line_type in {"OPD_NEW_FEE", "OPD_REPEAT_FEE"}:
             raise ValueError("ledger_finalized")
         ledger.status = "OPEN"
         ledger.finalized_by = ""
@@ -1060,17 +1231,40 @@ def add_billing_line_item(ledger_id, line_type, amount, actor_username, descript
             ledger=ledger,
             action="LEDGER_REOPENED",
             actor_username=actor_username,
-            payload={"reason": "additional_manual_charges"},
+            payload={"reason": "additional_charges", "line_type": line_type},
         )
 
     amount_decimal = Decimal(str(amount))
     if amount_decimal <= Decimal("0"):
         raise ValueError("invalid_amount")
 
-    # Keep one mandatory OPD new fee line by default to avoid accidental duplicates.
-    if line_type == "OPD_NEW_FEE":
-        duplicate = BillingLineItem.objects.filter(ledger=ledger, line_type="OPD_NEW_FEE").first()
+    # include_opd_fee should control only whether a NEW OPD fee line can be added now.
+    # Never delete previously-added OPD fees from this ledger when adding other charges (e.g. RCT stages).
+    if line_type in {"OPD_NEW_FEE", "OPD_REPEAT_FEE"} and not include_opd_fee:
+        raise ValueError("opd_fee_excluded")
+
+    # Validate RCT multi-sitting recovery fields if provided.
+    # Keep all RCT stage entries (don't delete previous ones) to show cumulative recovery.
+    if total_case_amount or recovery_stage_percent:
+        if not (total_case_amount and recovery_stage_percent):
+            raise ValueError("total_case_amount_and_recovery_stage_required")
+        if recovery_stage_percent not in {25, 50, 75, 100}:
+            raise ValueError("invalid_recovery_stage_percent")
+        total_case_amt = Decimal(str(total_case_amount))
+        if total_case_amt <= Decimal("0"):
+            raise ValueError("invalid_total_case_amount")
+        calculated_amount = (total_case_amt * Decimal(recovery_stage_percent)) / Decimal(100)
+        if amount_decimal != calculated_amount:
+            amount_decimal = calculated_amount
+
+    # Allow only one OPD consultation fee per ledger (either NEW or REPEAT).
+    if line_type in {"OPD_NEW_FEE", "OPD_REPEAT_FEE"}:
+        duplicate = BillingLineItem.objects.filter(
+            ledger=ledger,
+            line_type__in=["OPD_NEW_FEE", "OPD_REPEAT_FEE"],
+        ).first()
         if duplicate:
+            # Keep this legacy error code so existing UIs continue to treat it as already present.
             raise ValueError("opd_new_fee_already_present")
 
     item = BillingLineItem.objects.create(
@@ -1080,6 +1274,10 @@ def add_billing_line_item(ledger_id, line_type, amount, actor_username, descript
         amount=amount_decimal,
         source_order_id=source_order_id or "",
         created_by=actor_username,
+        total_case_amount=Decimal(str(total_case_amount)) if total_case_amount else None,
+        recovery_stage_percent=recovery_stage_percent,
+        sitting_number=sitting_number,
+        total_sittings=total_sittings,
     )
     ledger.updated_by = actor_username
     ledger.save(update_fields=["updated_by", "updated_at"])
@@ -1147,11 +1345,6 @@ def finalize_billing_ledger(ledger_id, actor_username, tax=0, discount=0):
     ledger = BillingLedger.objects.select_for_update().get(id=ledger_id)
     if ledger.status == "FINALIZED":
         raise ValueError("already_finalized")
-
-    if ledger.visit_type == "NEW":
-        has_new_fee = BillingLineItem.objects.filter(ledger=ledger, line_type="OPD_NEW_FEE").exists()
-        if not has_new_fee:
-            raise ValueError("mandatory_new_opd_fee_missing")
 
     if ledger.visit_type == "FOLLOW_UP" and ledger.repeat_fee_decision == "NO" and not ledger.repeat_fee_reason.strip():
         raise ValueError("repeat_fee_reason_required")
@@ -1449,4 +1642,414 @@ def resolve_incident_record(incident_id, actor_username):
     incident.resolved_at = timezone.now()
     incident.save(update_fields=["status", "resolved_by", "resolved_at"])
     return incident
+
+
+# ---------------------------------------------------------------------------
+# Emergency Interrupt Workflow
+# ---------------------------------------------------------------------------
+
+@transaction.atomic
+def pause_current_consultation(doctor_id, actor_username):
+    """
+    Pause current consultation for a doctor.
+    Changes QueueItem status from CALLED to PAUSED.
+	
+    Args:
+        doctor_id: ID of doctor
+        actor_username: Username of user performing action
+		
+    Returns:
+        tuple: (queue_item, event, payload)
+		
+    Raises:
+        ValueError: If no consultation in progress or consultation already finalized
+    """
+    # Find the CALLED queue item for this doctor (should be max 1)
+    queue_item = QueueItem.objects.select_for_update().filter(
+        doctor_id=doctor_id,
+        status="CALLED"
+    ).first()
+	
+    if not queue_item:
+        raise ValueError("no_consultation_in_progress")
+	
+    # Verify consultation exists
+    consultation = Consultation.objects.filter(
+        appointment_id=queue_item.appointment_id
+    ).first()
+	
+    if not consultation:
+        raise ValueError("no_consultation_record")
+	
+    # Prevent pausing finalized consultation
+    if consultation.status == "FINALIZED":
+        raise ValueError("cannot_pause_finalized_consultation")
+	
+    # Get doctor object for paused_by field
+    doctor_obj = Doctor.objects.get(id=doctor_id)
+	
+    # Transition to PAUSED
+    previous_status = queue_item.status
+    queue_item.status = "PAUSED"
+    queue_item.paused_at = timezone.now()
+    queue_item.paused_by = doctor_obj
+    queue_item.save(update_fields=["status", "paused_at", "paused_by", "updated_at"])
+	
+    # Create audit event
+    event, payload = _create_queue_event(
+        queue_item,
+        "PAUSE",
+        previous_status,
+        "PAUSED",
+        actor_username
+    )
+	
+    return queue_item, event, payload
+
+
+@transaction.atomic
+def add_emergency_patient(patient_id_or_data, doctor_id, actor_username, visit_type="NEW", actor_user_id=None):
+    """
+    Add emergency patient to queue (jumps to front).
+	
+    Args:
+        patient_id_or_data: Either patient ID (int) or dict with first_name, last_name, phone
+        doctor_id: ID of doctor
+        actor_username: Username of user performing action
+        visit_type: "NEW" or "FOLLOW_UP" (default "NEW")
+		
+    Returns:
+        dict: {
+            "appointment": appointment_obj,
+            "queue_item": queue_item_obj,
+            "queue_position": int,
+            "patient_name": str
+        }
+		
+    Raises:
+        ValueError: If patient not found or doctor not found
+    """
+	
+    # Get or create patient
+    if isinstance(patient_id_or_data, int):
+        patient = Patient.objects.get(id=patient_id_or_data)
+    else:
+        data = patient_id_or_data or {}
+        phone = (data.get("phone") or "").strip()
+        patient = Patient.objects.filter(phone=phone).first() if phone else None
+        if patient is None:
+            patient = Patient.objects.create(
+                first_name=(data.get("first_name") or "Unknown").strip(),
+                last_name=(data.get("last_name") or "").strip(),
+                phone=phone,
+                dob=data.get("dob") or timezone.now().date(),
+                gender=data.get("gender") or "O",
+            )
+	
+    # Get doctor
+    doctor = Doctor.objects.get(id=doctor_id)
+	
+    # Create or update appointment for today
+    today = timezone.now().date()
+    now = timezone.now().time()
+	
+    # First try to find an active appointment (BOOKED, RESCHEDULED)
+    # This ensures we don't reuse COMPLETED or CANCELLED appointments
+    active_statuses = ['BOOKED', 'RESCHEDULED']
+    active_appointment = Appointment.objects.filter(
+        patient_id=patient.id,
+        doctor_id=doctor_id,
+        slot_date=today,
+        status__in=active_statuses
+    ).first()
+
+    if active_appointment:
+        # Reuse active appointment and mark as emergency
+        appointment = active_appointment
+        created = False
+    else:
+        # No active appointment found, try get_or_create
+        # Note: This may retrieve a COMPLETED/CANCELLED appointment
+        appointment, created = Appointment.objects.get_or_create(
+            patient_id=patient.id,
+            doctor_id=doctor_id,
+            slot_date=today,
+            defaults={
+                "start_time": now,
+                "end_time": now,
+                "visit_type": visit_type,
+                "channel": "WALK_IN",
+                "status": "BOOKED",
+                "is_emergency": True,
+                "marked_emergency_at": timezone.now(),
+                "marked_emergency_by_id": actor_user_id,
+            }
+        )
+        # If we retrieved an existing one but it's not active, reset it
+        if not created and appointment.status not in active_statuses:
+            appointment.status = "BOOKED"
+
+    # Mark as emergency if not already
+    if not appointment.is_emergency:
+        appointment.is_emergency = True
+        appointment.marked_emergency_at = timezone.now()
+        appointment.marked_emergency_by_id = actor_user_id
+    
+    # Save all updates
+    update_fields = ["is_emergency", "marked_emergency_at", "marked_emergency_by_id", "updated_at"]
+    if not created and appointment.status not in active_statuses:
+        update_fields.append("status")
+    
+    appointment.save(update_fields=update_fields)
+    # Get the newly created/updated queue item
+    queue_item = QueueItem.objects.filter(
+        appointment_id=appointment.id
+    ).first()
+	
+    if not queue_item:
+        # Create queue item if doesn't exist
+        queue_items_today = QueueItem.objects.filter(
+            doctor_id=doctor_id,
+            slot_date=today
+        ).order_by("-token_number")
+		
+        next_token = (queue_items_today.first().token_number or 0) + 1
+		
+        queue_item = QueueItem.objects.create(
+            appointment_id=appointment.id,
+            doctor_id=doctor_id,
+            slot_date=today,
+            token_number=next_token,
+            status="WAITING",
+        )
+	
+    # Find position in queue (emergency patients are at position 0/1)
+    waiting_items = QueueItem.objects.filter(
+        doctor_id=doctor_id,
+        slot_date=today,
+        status__in=["CALLED", "PAUSED", "WAITING", "RESUMED"]
+    ).order_by("token_number")
+	
+    queue_position = list(waiting_items.values_list("id", flat=True)).index(queue_item.id) if queue_item.id in waiting_items.values_list("id", flat=True) else 0
+	
+    return {
+        "appointment": appointment,
+        "queue_item": queue_item,
+        "queue_position": queue_position,
+        "patient_name": f"{patient.first_name} {patient.last_name}".strip(),
+        "opd_number": appointment.opd_number,
+    }
+
+
+def _active_appointments_qs(doctor_id, slot_date):
+    return Appointment.objects.filter(
+        doctor_id=doctor_id,
+        slot_date=slot_date,
+        status__in=["BOOKED", "RESCHEDULED"],
+    )
+
+
+def _day_slot_templates(doctor_id, slot_date):
+    occupied = set(
+        _active_appointments_qs(doctor_id, slot_date)
+        .values_list("start_time", "end_time")
+    )
+    slots = list(
+        DoctorSlot.objects.filter(doctor_id=doctor_id, slot_date=slot_date, status="AVAILABLE")
+        .order_by("start_time")
+        .values_list("start_time", "end_time")
+    )
+    return [slot for slot in slots if slot not in occupied]
+
+
+def _move_single_appointment(appointment, slot_date, start_time, end_time, actor_username, reason):
+    previous = appointment.status
+    appointment.slot_date = slot_date
+    appointment.start_time = start_time
+    appointment.end_time = end_time
+    appointment.status = "RESCHEDULED"
+    appointment.save(update_fields=["slot_date", "start_time", "end_time", "status", "updated_at"])
+
+    QueueItem.objects.filter(appointment_id=appointment.id).delete()
+
+    AppointmentEvent.objects.create(
+        appointment=appointment,
+        action="RESCHEDULE",
+        previous_status=previous,
+        new_status="RESCHEDULED",
+        reason=reason,
+        actor_username=actor_username,
+    )
+
+
+def _execute_day_reschedule(request_obj, action, actor_username):
+    doctor = request_obj.doctor
+    appointments = list(
+        Appointment.objects.select_for_update()
+        .filter(id__in=request_obj.details.get("appointment_ids", []))
+        .order_by("start_time", "id")
+    )
+    if not appointments:
+        raise ValueError("no_appointments_to_reschedule")
+
+    allocations = {}
+    target_date = request_obj.target_date
+
+    if action == "EXCEED":
+        free_slots = _day_slot_templates(doctor.id, target_date)
+        for index, appointment in enumerate(appointments):
+            if index < len(free_slots):
+                start_time, end_time = free_slots[index]
+            else:
+                start_time, end_time = appointment.start_time, appointment.end_time
+            _move_single_appointment(
+                appointment,
+                target_date,
+                start_time,
+                end_time,
+                actor_username,
+                f"doctor_unavailable:{request_obj.source_date}",
+            )
+            allocations[str(target_date)] = allocations.get(str(target_date), 0) + 1
+        request_obj.status = "EXECUTED_EXCEED"
+    elif action == "CASCADE":
+        day_cursor = target_date
+        remaining = list(appointments)
+        while remaining:
+            capacity = get_doctor_capacity_for_date(doctor, day_cursor)
+            booked = _active_appointments_qs(doctor.id, day_cursor).count()
+            free_capacity = max(capacity - booked, 0)
+
+            if free_capacity <= 0:
+                day_cursor = day_cursor + timedelta(days=1)
+                continue
+
+            free_slots = _day_slot_templates(doctor.id, day_cursor)
+            day_take = min(free_capacity, len(remaining))
+            selected = remaining[:day_take]
+            remaining = remaining[day_take:]
+
+            for index, appointment in enumerate(selected):
+                if index < len(free_slots):
+                    start_time, end_time = free_slots[index]
+                else:
+                    start_time, end_time = appointment.start_time, appointment.end_time
+                _move_single_appointment(
+                    appointment,
+                    day_cursor,
+                    start_time,
+                    end_time,
+                    actor_username,
+                    f"doctor_unavailable:{request_obj.source_date}",
+                )
+                allocations[str(day_cursor)] = allocations.get(str(day_cursor), 0) + 1
+        request_obj.status = "EXECUTED_CASCADE"
+    else:
+        raise ValueError("invalid_action")
+
+    request_obj.decided_by = actor_username
+    request_obj.decided_at = timezone.now()
+    request_obj.details = {
+        **(request_obj.details or {}),
+        "allocation": allocations,
+        "decision": action,
+    }
+    request_obj.save(update_fields=["status", "decided_by", "decided_at", "details"])
+
+    IncidentRecord.objects.filter(
+        status="OPEN",
+        source="doctor_day_unavailable",
+        details__request_id=request_obj.id,
+    ).update(
+        status="RESOLVED",
+        resolved_by=actor_username,
+        resolved_at=timezone.now(),
+    )
+
+    return allocations
+
+
+@transaction.atomic
+def trigger_doctor_day_unavailable(doctor_id, source_date, actor_username, reason=""):
+    doctor = Doctor.objects.get(id=doctor_id)
+    appointments = list(
+        _active_appointments_qs(doctor.id, source_date)
+        .select_for_update()
+        .order_by("start_time", "id")
+    )
+    if not appointments:
+        raise ValueError("no_appointments_for_day")
+
+    target_date = source_date + timedelta(days=1)
+    capacity = get_doctor_capacity_for_date(doctor, target_date)
+    target_existing = _active_appointments_qs(doctor.id, target_date).count()
+    overflow = max((target_existing + len(appointments)) - capacity, 0)
+
+    request_obj = DoctorDayRescheduleRequest.objects.create(
+        doctor=doctor,
+        source_date=source_date,
+        target_date=target_date,
+        reason=reason or "doctor_emergency_unavailable",
+        total_appointments=len(appointments),
+        target_capacity=capacity,
+        target_existing=target_existing,
+        overflow_count=overflow,
+        requested_by=actor_username,
+        details={
+            "appointment_ids": [item.id for item in appointments],
+            "patient_notifications": [
+                {
+                    "appointment_id": item.id,
+                    "patient_id": item.patient_id,
+                    "patient_name": f"{item.patient.first_name} {item.patient.last_name}".strip(),
+                    "mobile": item.patient.phone,
+                }
+                for item in appointments
+            ],
+        },
+    )
+
+    if overflow == 0:
+        allocations = _execute_day_reschedule(request_obj, "CASCADE", actor_username)
+        request_obj.status = "EXECUTED_AUTO"
+        request_obj.save(update_fields=["status"])
+        return request_obj, allocations
+
+    create_incident_record(
+        severity="WARN",
+        source="doctor_day_unavailable",
+        summary=(
+            f"{doctor.display_name} unavailable on {source_date}. "
+            f"Overflow {overflow} while shifting to {target_date}."
+        ),
+        runbook_ref="runbooks/doctor-day-unavailable.md",
+        details={
+            "request_id": request_obj.id,
+            "doctor_id": doctor.id,
+            "doctor_name": doctor.display_name,
+            "source_date": str(source_date),
+            "target_date": str(target_date),
+            "overflow_count": overflow,
+            "total_appointments": len(appointments),
+        },
+        actor_username=actor_username,
+    )
+    return request_obj, {}
+
+
+def list_pending_day_reschedule_requests():
+    return list(
+        DoctorDayRescheduleRequest.objects.select_related("doctor")
+        .filter(status="PENDING_RECEPTION")
+        .order_by("created_at")
+    )
+
+
+@transaction.atomic
+def decide_day_reschedule_request(request_id, action, actor_username):
+    request_obj = DoctorDayRescheduleRequest.objects.select_for_update().select_related("doctor").get(id=request_id)
+    if request_obj.status != "PENDING_RECEPTION":
+        raise ValueError("request_not_pending")
+    allocations = _execute_day_reschedule(request_obj, action, actor_username)
+    return request_obj, allocations
 

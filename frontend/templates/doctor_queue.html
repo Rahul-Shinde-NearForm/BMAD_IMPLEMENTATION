@@ -5,6 +5,64 @@
 
 {% block content %}
 <div class="container">
+    <style>
+        .queue-badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 700;
+            margin-right: 4px;
+            white-space: nowrap;
+        }
+
+        .badge-called {
+            background: #fde68a;
+            color: #92400e;
+        }
+
+        .badge-paused {
+            background: #fed7aa;
+            color: #9a3412;
+        }
+
+        .badge-resumed {
+            background: #bfdbfe;
+            color: #1e3a8a;
+        }
+
+        .badge-waiting {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .badge-neutral {
+            background: #e5e7eb;
+            color: #374151;
+        }
+
+        .badge-emergency {
+            background: #ef4444;
+            color: #fff;
+        }
+
+        .called-row {
+            animation: calledBlink 1s infinite;
+        }
+
+        @keyframes calledBlink {
+
+            0%,
+            100% {
+                background-color: #fff8dc;
+            }
+
+            50% {
+                background-color: #ffdd57;
+            }
+        }
+    </style>
+
     <section class="toolbar">
         <button class="btn-link" onclick="window.location.href = document.referrer || '/'">&#8592; Back</button>
     </section>
@@ -36,11 +94,87 @@
         return match ? match[1] : "";
     }
 
+    function queueStatusBadgeHtml(status) {
+        const normalized = String(status || "").toUpperCase();
+        if (normalized === "CALLED") {
+            return '<span class="queue-badge badge-called">Calling</span>';
+        }
+        if (normalized === "PAUSED") {
+            return '<span class="queue-badge badge-paused">Paused</span>';
+        }
+        if (normalized === "RESUMED") {
+            return '<span class="queue-badge badge-resumed">Resuming</span>';
+        }
+        if (normalized === "WAITING") {
+            return '<span class="queue-badge badge-waiting">Waiting</span>';
+        }
+        if (normalized === "NOT_IN_QUEUE") {
+            return '<span class="queue-badge badge-neutral">Not In Queue</span>';
+        }
+        return `<span class="queue-badge badge-neutral">${normalized || "-"}</span>`;
+    }
+
+    function renderQueueBoard(items) {
+        const resultEl = document.getElementById("queueBoardResult");
+        if (!Array.isArray(items) || !items.length) {
+            resultEl.className = "result-box result-success";
+            resultEl.innerHTML = "No queue items found for the selected doctor/date.";
+            return;
+        }
+
+        let html = "<table style='width:100%; border-collapse: collapse; font-size:0.9rem;'>";
+        html += "<tr style='background:#dce8ff; font-weight:600;'>";
+        html += "<td style='padding:8px; border:1px solid #c6d7fa;'>#</td>";
+        html += "<td style='padding:8px; border:1px solid #c6d7fa;'>Token</td>";
+        html += "<td style='padding:8px; border:1px solid #c6d7fa;'>Appointment ID</td>";
+        html += "<td style='padding:8px; border:1px solid #c6d7fa;'>Status</td>";
+        html += "<td style='padding:8px; border:1px solid #c6d7fa;'>Estimated Wait (min)</td>";
+        html += "</tr>";
+
+        items.forEach((item, index) => {
+            const isCalled = String(item.status || "").toUpperCase() === "CALLED";
+            const rowClass = isCalled ? " class='called-row'" : "";
+            const emergencyBadge = item.is_emergency
+                ? '<span class="queue-badge badge-emergency">Emergency</span>'
+                : "";
+
+            html += `<tr${rowClass}>`;
+            html += `<td style='padding:8px; border:1px solid #c6d7fa;'>${index + 1}</td>`;
+            html += `<td style='padding:8px; border:1px solid #c6d7fa;'>${item.token_number || "-"}</td>`;
+            html += `<td style='padding:8px; border:1px solid #c6d7fa;'>${item.appointment_id || "-"}</td>`;
+            html += `<td style='padding:8px; border:1px solid #c6d7fa;'>${queueStatusBadgeHtml(item.status)}${emergencyBadge}</td>`;
+            html += `<td style='padding:8px; border:1px solid #c6d7fa;'>${item.estimated_wait_minutes || 0}</td>`;
+            html += "</tr>";
+        });
+
+        html += "</table>";
+        resultEl.className = "result-box result-success";
+        resultEl.innerHTML = html;
+    }
+
     document.getElementById("queueBoardForm").addEventListener("submit", async (e) => {
         e.preventDefault();
         const params = new URLSearchParams(new FormData(e.target));
         const res = await fetch(`/api/queue/board/?${params.toString()}`, { credentials: "same-origin" });
-        document.getElementById("queueBoardResult").textContent = await res.text();
+        const resultEl = document.getElementById("queueBoardResult");
+        const text = await res.text();
+
+        let data = {};
+        try {
+            data = JSON.parse(text);
+        } catch (_) {
+            resultEl.className = "result-box result-error";
+            resultEl.textContent = text;
+            return;
+        }
+
+        if (!res.ok) {
+            resultEl.className = "result-box result-error";
+            resultEl.textContent = data.error || "Unable to load queue board.";
+            return;
+        }
+
+        renderQueueBoard(data.items || []);
     });
 
     document.getElementById("queueCallNextForm").addEventListener("submit", async (e) => {

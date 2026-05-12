@@ -5,19 +5,44 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{% block title %}OPD Management System{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap"
+        rel="stylesheet">
     <link rel="stylesheet" href="/static/css/app.css" />
     <style>
+        :root {
+            --bg-soft: #edf3f7;
+            --surface: #ffffff;
+            --surface-muted: #f7fafc;
+            --text-primary: #172433;
+            --text-muted: #55657a;
+            --border-soft: #dbe7f3;
+            --btn-grad-start: #2d6a91;
+            --btn-grad-end: #1a4d6d;
+            --btn-grad-hover-start: #3479a6;
+            --btn-grad-hover-end: #163f59;
+            --btn-shadow: 0 6px 14px rgba(14, 54, 85, 0.22);
+            --btn-shadow-hover: 0 10px 22px rgba(14, 54, 85, 0.28);
+        }
+
         body {
             margin: 0;
             padding: 0;
-            font-family: Arial, sans-serif;
+            font-family: "DM Sans", "Segoe UI", sans-serif;
+            color: var(--text-primary);
             display: flex;
             height: 100vh;
+            background:
+                radial-gradient(circle at 15% 10%, rgba(48, 122, 170, 0.08), transparent 45%),
+                radial-gradient(circle at 85% 85%, rgba(72, 164, 132, 0.08), transparent 40%),
+                var(--bg-soft);
         }
 
         .sidebar {
             width: 220px;
-            background-color: #1a4d6d;
+            background: linear-gradient(180deg, #173f5c 0%, #12354e 100%);
             color: white;
             padding: 15px 0;
             overflow-y: auto;
@@ -26,6 +51,8 @@
             left: 0;
             top: 0;
             z-index: 1000;
+            box-shadow: 12px 0 28px rgba(10, 35, 56, 0.22);
+            border-right: 1px solid rgba(255, 255, 255, 0.12);
         }
 
         .sidebar .menu-item {
@@ -41,11 +68,12 @@
             white-space: normal;
             word-wrap: break-word;
             line-height: 1.4;
-            font-size: 14px;
+            font-size: 16px;
+            font-weight: 600;
         }
 
         .sidebar .menu-item:hover {
-            background-color: rgba(255, 255, 255, 0.15);
+            background-color: rgba(255, 255, 255, 0.18);
             border-left-color: #00bcd4;
             color: #ffffff;
         }
@@ -72,7 +100,7 @@
             display: block;
             padding: 10px 16px;
             padding-left: 40px;
-            font-size: 13px;
+            font-size: 15px;
             color: #b3d9ff;
             text-decoration: none;
             transition: all 0.2s ease;
@@ -92,27 +120,47 @@
             font-weight: bold;
         }
 
+        .sidebar-photo-link {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            text-decoration: none;
+            border-radius: 50%;
+        }
+
+        .sidebar-photo-link:focus-visible {
+            outline: 2px solid #8de5ff;
+            outline-offset: 3px;
+        }
+
         .main-content {
             margin-left: 220px;
             flex: 1;
             overflow-y: auto;
             display: flex;
             flex-direction: column;
+            background: transparent;
         }
 
         .header {
-            background-color: #f5f5f5;
+            background: rgba(255, 255, 255, 0.82);
+            backdrop-filter: blur(10px);
             padding: 20px;
-            border-bottom: 1px solid #ddd;
+            border-bottom: 1px solid var(--border-soft);
             display: flex;
             justify-content: space-between;
             align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 900;
         }
 
         .header h1 {
             margin: 0;
-            font-size: 24px;
-            color: #333;
+            font-family: "Playfair Display", "Georgia", serif;
+            font-size: 28px;
+            color: #14283b;
+            letter-spacing: 0.2px;
         }
 
         .header-actions {
@@ -122,20 +170,63 @@
         }
 
         .header-actions a,
-        .header-actions button {
-            padding: 8px 15px;
-            border: none;
-            border-radius: 4px;
+        .header-actions button,
+        .btn-link,
+        button,
+        input[type="submit"],
+        input[type="button"],
+        input[type="reset"] {
+            padding: 9px 16px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
             cursor: pointer;
             text-decoration: none;
-            background-color: #1a4d6d;
-            color: white;
+            background: linear-gradient(135deg, var(--btn-grad-start), var(--btn-grad-end));
+            color: #fff;
             font-size: 14px;
+            font-weight: 600;
+            letter-spacing: 0.2px;
+            box-shadow: var(--btn-shadow);
+            transition: transform 0.16s ease, box-shadow 0.2s ease, filter 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.3rem;
         }
 
         .header-actions a:hover,
-        .header-actions button:hover {
-            background-color: #143a52;
+        .header-actions button:hover,
+        .btn-link:hover,
+        button:hover,
+        input[type="submit"]:hover,
+        input[type="button"]:hover,
+        input[type="reset"]:hover {
+            background: linear-gradient(135deg, var(--btn-grad-hover-start), var(--btn-grad-hover-end));
+            box-shadow: var(--btn-shadow-hover);
+            transform: translateY(-1px);
+            filter: saturate(1.08);
+        }
+
+        .header-actions a:active,
+        .header-actions button:active,
+        .btn-link:active,
+        button:active,
+        input[type="submit"]:active,
+        input[type="button"]:active,
+        input[type="reset"]:active {
+            transform: translateY(0);
+            box-shadow: 0 4px 10px rgba(14, 54, 85, 0.25);
+        }
+
+        .header-actions a:focus-visible,
+        .header-actions button:focus-visible,
+        .btn-link:focus-visible,
+        button:focus-visible,
+        input[type="submit"]:focus-visible,
+        input[type="button"]:focus-visible,
+        input[type="reset"]:focus-visible {
+            outline: 2px solid #7bdfff;
+            outline-offset: 2px;
         }
 
         .content {
@@ -144,7 +235,8 @@
         }
 
         .container {
-            max-width: 1200px;
+            max-width: 1280px;
+            margin: 0 auto;
         }
 
         .toolbar {
@@ -155,23 +247,64 @@
         }
 
         .btn-link {
-            padding: 10px 15px;
-            background-color: #1a4d6d;
-            color: white;
-            text-decoration: none;
-            border-radius: 4px;
-            font-size: 14px;
-        }
-
-        .btn-link:hover {
-            background-color: #143a52;
+            min-height: 38px;
         }
 
         .form-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 15px;
+            gap: 16px;
             margin-bottom: 20px;
+        }
+
+        section:not(.toolbar) {
+            background: var(--surface);
+            border: 1px solid var(--border-soft);
+            border-radius: 14px;
+            padding: 18px;
+            box-shadow: 0 8px 20px rgba(17, 46, 74, 0.08);
+            margin-bottom: 18px;
+        }
+
+        h2,
+        h3 {
+            color: #15314a;
+            letter-spacing: 0.15px;
+        }
+
+        label {
+            color: var(--text-muted);
+            font-size: 0.94rem;
+            font-weight: 600;
+        }
+
+        input,
+        select,
+        textarea {
+            width: 100%;
+            margin-top: 6px;
+            padding: 10px 12px;
+            border-radius: 10px;
+            border: 1px solid #cad8e8;
+            background: var(--surface-muted);
+            color: var(--text-primary);
+            font-size: 0.95rem;
+            box-sizing: border-box;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+        }
+
+        input:focus,
+        select:focus,
+        textarea:focus {
+            outline: none;
+            border-color: #2f78ad;
+            background: #ffffff;
+            box-shadow: 0 0 0 3px rgba(48, 121, 169, 0.18);
+        }
+
+        table {
+            border-radius: 10px;
+            overflow: hidden;
         }
 
         .form-inline {
@@ -187,10 +320,10 @@
         }
 
         .result-box {
-            background-color: #f0f4ff;
+            background-color: #f4f8fd;
             color: #1a2b4a;
-            border: 1px solid #c6d7fa;
-            border-radius: 8px;
+            border: 1px solid #d2e0f0;
+            border-radius: 10px;
             padding: 0.85rem 1rem;
             margin-top: 15px;
             min-height: 44px;
@@ -219,7 +352,7 @@
             align-items: center;
             gap: 0.75rem;
             padding: 0.6rem 0.5rem;
-            border-bottom: 1px solid #dce8ff;
+            border-bottom: 1px solid #e3edf8;
             font-size: 0.95rem;
             color: #1a2b4a;
             font-weight: 500;
@@ -231,17 +364,14 @@
 
         .patient-result-item button {
             margin-left: auto;
-            padding: 0.3rem 0.85rem;
-            background: #1a4d6d;
-            color: #fff;
-            border: none;
-            border-radius: 6px;
-            font-size: 0.88rem;
-            cursor: pointer;
+            padding: 0.32rem 0.9rem;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            min-height: 30px;
         }
 
         .patient-result-item button:hover {
-            background: #14395a;
+            transform: translateY(-1px);
         }
 
         @media (max-width: 768px) {
@@ -262,67 +392,83 @@
 
 <body>
     <div class="sidebar">
-        <div
-            style="padding: 12px 12px; border-bottom: 1px solid rgba(255,255,255,0.2); margin: 8px; border-radius: 4px; background-color: rgba(0,188,212,0.15); display: flex; align-items: center; gap: 12px;">
-            <div id="sidebarPhotoPreview"
-                style="width: 50px; height: 50px; border-radius: 50%; background-color: #0d3b52; flex-shrink: 0; display: flex; align-items: center; justify-content: center; overflow: hidden;">
-                <img id="sidebarPhotoImg" src="" style="width: 100%; height: 100%; object-fit: cover; display: none;" />
-                <span id="sidebarPhotoPlaceholder" style="font-size: 24px;">👤</span>
-            </div>
-            <div style="flex-grow: 1;">
-                <strong id="sidebarUserName" style="font-size: 14px; display: block;">{{ user.username }}</strong>
+        {% if user.is_authenticated %}
+        <div id="sidebarUserCard"
+            style="padding: 12px 12px; border-bottom: 1px solid rgba(255,255,255,0.2); margin: 8px; border-radius: 4px; background-color: rgba(0,188,212,0.15);">
+            <div style="display:flex; align-items:center; gap:12px;">
+                <a href="/profile/" class="sidebar-photo-link" aria-label="Open profile settings">
+                    <div id="sidebarPhotoPreview"
+                        style="width: 50px; height: 50px; border-radius: 50%; background-color: #0d3b52; flex-shrink: 0; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+                        <img id="sidebarPhotoImg" src=""
+                            style="width: 100%; height: 100%; object-fit: cover; display: none;" />
+                        <span id="sidebarPhotoPlaceholder" style="font-size: 24px;">👤</span>
+                    </div>
+                </a>
+                <div style="flex-grow: 1; min-width: 0;">
+                    <a href="/profile/" aria-label="Open profile settings"
+                        style="text-decoration:none; color:inherit; display:block;">
+                        <strong id="sidebarUserName" style="font-size: 14px; display: block; line-height: 1.3;">{{
+                            user.get_full_name|default:user.username|default:"User" }}</strong>
+                    </a>
+                </div>
             </div>
         </div>
+        {% endif %}
 
         {% if user.is_authenticated %}
         {% if not is_admin %}
         <!-- Home -->
-        <a href="/" class="menu-item">Home</a>
-
-        <!-- Profile -->
-        <a href="/profile/" class="menu-item">Profile</a>
+        <a href="/" class="menu-item">🏠 Home (होम)</a>
 
         <!-- Admin Menu (only for Admin) -->
         {% if is_admin %}
         <div class="menu-item" onclick="toggleSubmenu('admin-menu')">
-            Admin
+            ⚙️ Admin (प्रशासन)
             <span class="menu-toggle">▼</span>
         </div>
         <div class="submenu" id="admin-menu">
-            <a href="/users/manage/" class="submenu-item">Manage Users & Roles</a>
-            <a href="/api/rbac/bootstrap/" class="submenu-item">Bootstrap RBAC</a>
+            <a href="/users/manage/" class="submenu-item">👥 Manage Users & Roles (वापरकर्ता व भूमिका व्यवस्थापित
+                करा)</a>
+            <a href="/workbench/admin/medicines/" class="submenu-item">💊 Manage Medicines (औषध व्यवस्थापित करा)</a>
+            <a href="/api/rbac/bootstrap/" class="submenu-item">🛡️ Bootstrap RBAC</a>
         </div>
         {% endif %}
 
         <!-- Receptionist Menu (Receptionist/Admin) -->
         {% if is_receptionist or is_admin %}
-        <a href="/patients/register/" class="menu-item">Register New Patient</a>
-        <a href="/patients/edit/" class="menu-item">Edit Patient Details</a>
-        <a href="/workbench/reception/#billing" class="menu-item">Billing</a>
-        <a href="/appointments/book/" class="menu-item">Book Appointment</a>
-        <a href="/patients/reminder/" class="menu-item">Tomorrow's Reminder List</a>
-        <a href="/doctors/schedule/" class="menu-item">Doctor Schedule</a>
+        <a href="/patients/register/" class="menu-item">📝 Register New Patient & appointment (नवीन रुग्ण नोंदणी व
+            भेट)</a>
+        <a href="/appointments/book/" class="menu-item">📅 Old Patients Appointment (जुन्या रुग्णांची भेट)</a>
+        <a href="/patients/edit/" class="menu-item">✏️ Edit Patient Details (रुग्ण तपशील संपादित करा)</a>
+        <a href="/workbench/reception/#billing" class="menu-item">💳 Billing (बिलिंग)</a>
+        <a href="/patients/reminder/" class="menu-item">⏰ Tomorrow's Reminder List (उद्यापाची स्मरणपत्र यादी)</a>
+        <a href="/doctors/schedule/" class="menu-item">🩺 Doctor Schedule and OPD fee (डॉक्टर वेळापत्रक आणि ओपीडी
+            शुल्क)</a>
         {% endif %}
 
         <!-- Doctor Menu -->
         {% if is_doctor or is_admin %}
-        <a href="/doctor/appointments/" class="menu-item">My Appointments</a>
-        <a href="/doctor/vitals-orders/" class="menu-item">Orders</a>
-        <a href="/doctor/prescription/" class="menu-item">Prescription</a>
+        <a href="/doctor/appointments/" class="menu-item">📋 My Appointments (माझ्या भेटी)</a>
+        <a href="/doctor/vitals-orders/" class="menu-item">🧪 Orders (ऑर्डर्स)</a>
+        <a href="/doctor/prescription/" class="menu-item">💊 All Prescription's (प्रिस्क्रिप्शन)</a>
         {% endif %}
 
         <!-- Pharmacy Menu -->
         {% if is_pharmacist %}
         <div class="menu-item" onclick="toggleSubmenu('pharmacy-menu')">
-            Pharmacy
+            🏥 Pharmacy (औषधालय)
             <span class="menu-toggle">▼</span>
         </div>
         <div class="submenu" id="pharmacy-menu">
-            <a href="/workbench/pharmacy/" class="submenu-item">Prescription Queue</a>
-            <a href="/workbench/pharmacy/" class="submenu-item">Billing</a>
+            <a href="/workbench/pharmacy/" class="submenu-item">📥 Prescription Queue (प्रिस्क्रिप्शन रांग)</a>
         </div>
         {% endif %}
 
+        {% else %}
+        <!-- Admin-only left panel -->
+        <a href="/" class="menu-item">🏠 Home (होम)</a>
+        <a href="/users/manage/" class="menu-item">👥 Manage Users &amp; Roles (वापरकर्ता व भूमिका व्यवस्थापित करा)</a>
+        <a href="/workbench/admin/medicines/" class="menu-item">💊 Manage Medicines (औषध व्यवस्थापित करा)</a>
         {% endif %}
 
         {% endif %}
@@ -335,12 +481,18 @@
                 <div id="istClock"
                     style="font-size: 0.95rem; font-weight: 500; color: #1a2b4a; padding-right: 1rem; display: flex; flex-direction: column; align-items: flex-end; gap: 0.25rem;">
                     <div style="display: flex; align-items: center; gap: 0.5rem;">
-                        <span style="font-size: 1.2rem;">📅</span>
-                        <span id="dateDisplay">--/--/----</span>
+                        <span style="font-size: 1.2rem;">🏥</span>
+                        <span id="headerClinicName">OPD Clinic</span>
                     </div>
-                    <div style="display: flex; align-items: center; gap: 0.5rem;">
-                        <span style="font-size: 1.2rem;">🕐</span>
-                        <span id="clockDisplay">--:-- IST</span>
+                    <div style="display: flex; align-items: center; gap: 1rem;">
+                        <div style="display: flex; align-items: center; gap: 0.5rem;">
+                            <span style="font-size: 1.2rem;">📅</span>
+                            <span id="dateDisplay">--/--/----</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 0.5rem;">
+                            <span style="font-size: 1.2rem;">🕐</span>
+                            <span id="clockDisplay">--:-- IST</span>
+                        </div>
                     </div>
                 </div>
                 {% if user.is_authenticated %}
@@ -365,9 +517,12 @@
         // Load profile photo in sidebar
         function loadSidebarPhoto() {
             const savedPhoto = localStorage.getItem('userProfilePhoto');
+            const img = document.getElementById('sidebarPhotoImg');
+            const placeholder = document.getElementById('sidebarPhotoPlaceholder');
+            if (!img || !placeholder) {
+                return;
+            }
             if (savedPhoto) {
-                const img = document.getElementById('sidebarPhotoImg');
-                const placeholder = document.getElementById('sidebarPhotoPlaceholder');
                 img.src = savedPhoto;
                 img.style.display = 'block';
                 placeholder.style.display = 'none';
@@ -376,6 +531,7 @@
 
         async function loadSidebarUserName() {
             const nameEl = document.getElementById('sidebarUserName');
+            const clinicEl = document.getElementById('headerClinicName');
             if (!nameEl) {
                 return;
             }
@@ -388,11 +544,18 @@
                 const firstName = (data.first_name || '').trim();
                 const lastName = (data.last_name || '').trim();
                 const fullName = `${firstName} ${lastName}`.trim();
+                const username = (data.username || '').trim();
                 const roles = data.roles || [];
                 const isDoctor = roles.includes('Doctor');
                 const suffix = (data.suffix || 'Dr').trim();
+                const clinicName = (data.clinic_name || 'OPD Clinic').trim();
+
+                if (clinicEl) {
+                    clinicEl.textContent = clinicName || 'OPD Clinic';
+                }
+
                 if (isDoctor) {
-                    const baseName = fullName || nameEl.textContent.trim();
+                    const baseName = fullName || username || nameEl.textContent.trim();
                     const normalizedBase = baseName.toLowerCase().replace(/\./g, '');
                     const normalizedSuffix = suffix.toLowerCase().replace(/\./g, '');
                     if (normalizedBase.startsWith(`${normalizedSuffix} `) || normalizedBase === normalizedSuffix) {
@@ -401,7 +564,7 @@
                         nameEl.textContent = `${suffix} ${baseName}`;
                     }
                 } else {
-                    nameEl.textContent = fullName || nameEl.textContent;
+                    nameEl.textContent = fullName || username || nameEl.textContent;
                 }
             } catch (_) {
                 // Keep server-rendered fallback username if profile API fails.

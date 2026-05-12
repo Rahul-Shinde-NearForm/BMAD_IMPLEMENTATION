@@ -4,8 +4,14 @@
 {% block page_title %}My Appointments{% endblock %}
 
 {% block content %}
-<div class="container">
+<div class="container doctor-appointments-container">
     <style>
+        .doctor-appointments-container {
+            max-width: none;
+            width: 100%;
+            margin: 0;
+        }
+
         @keyframes calledBlink {
             0% {
                 background-color: #fff4bf;
@@ -23,21 +29,141 @@
         .called-row {
             animation: calledBlink 1s infinite;
         }
+
+        .queue-badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 700;
+            margin-right: 4px;
+            white-space: nowrap;
+        }
+
+        .badge-called {
+            background: #fde68a;
+            color: #92400e;
+        }
+
+        .badge-paused {
+            background: #fed7aa;
+            color: #9a3412;
+        }
+
+        .badge-resumed {
+            background: #bfdbfe;
+            color: #1e3a8a;
+        }
+
+        .badge-waiting {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .badge-neutral {
+            background: #e5e7eb;
+            color: #374151;
+        }
+
+        .badge-emergency {
+            background: #ef4444;
+            color: #fff;
+        }
+
+        .doctor-stats-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 16px;
+        }
+
+        .doctor-main-layout {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 16px;
+            align-items: start;
+            margin-top: 0.75rem;
+        }
+
+        .doctor-panel {
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 10px;
+            background: #fff;
+        }
+
+        #appointmentsList.result-box {
+            padding: 0.55rem 0.7rem;
+            line-height: 1.35;
+        }
+
+        .doctor-stats-card {
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 12px;
+            background: #fff;
+        }
+
+        .doctor-calendar-nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .doctor-calendar {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+
+        .doctor-calendar th,
+        .doctor-calendar td {
+            border: 1px solid #ddd;
+            padding: 6px;
+            text-align: center;
+        }
+
+        .doctor-calendar th {
+            background: #f5f5f5;
+        }
+
+        @media (max-width: 900px) {
+            .doctor-main-layout {
+                grid-template-columns: 1fr;
+            }
+        }
     </style>
 
     <section class="toolbar">
         <button class="btn-link" onclick="window.location.href = document.referrer || '/'">&#8592; Back</button>
     </section>
 
-    <section>
-        <h2>View Appointments</h2>
-        <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem;">
-            <button type="button" onclick="loadAppointmentsForDate('tomorrow')"
-                style="padding:0.5rem 1rem; background:#1a7d4d; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.95rem;">Load
-                Tomorrow's Appointments</button>
-        </div>
-        <div id="appointmentsList"></div>
-    </section>
+    <div class="doctor-main-layout">
+        <section class="doctor-panel">
+            <h2 style="margin-top: 0;">View Appointments</h2>
+            <div style="display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; margin-bottom: 1rem;">
+                <button type="button" onclick="loadAppointmentsForDate('tomorrow')"
+                    style="padding:0.5rem 1rem; background:#1a7d4d; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.95rem;">Load
+                    Tomorrow's Appointments</button>
+                <button type="button" id="doctorEmergencyUnavailableBtn"
+                    style="padding:0.5rem 1rem; background:#b91c1c; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.95rem;">Emergency:
+                    Unavailable Today</button>
+                <label style="font-size:0.9rem; color:#334155; display:flex; align-items:center; gap:0.4rem;">
+                    Payment Filter
+                    <select id="doctorPaymentStatusFilter"
+                        style="padding:0.4rem 0.5rem; border:1px solid #cbd5e1; border-radius:4px; font-size:0.9rem;">
+                        <option value="ALL">All</option>
+                        <option value="PARTIAL">Partial</option>
+                        <option value="PENDING">Pending</option>
+                        <option value="DONE">Done</option>
+                        <option value="NOT_GENERATED">Not Generated</option>
+                    </select>
+                </label>
+            </div>
+            <div id="doctorEmergencyRescheduleResult" class="result-box"></div>
+            <div id="appointmentsList"></div>
+        </section>
+    </div>
 </div>
 
 <script>
@@ -51,6 +177,160 @@
     let loadedDateType = "today";
     let appointmentsRenderKey = "";
     let appointmentsRequestInFlight = false;
+    let paymentStatusFilter = "ALL";
+
+    let doctorCalendarYear = new Date().getFullYear();
+    let doctorCalendarMonth = new Date().getMonth() + 1;
+
+    function queueStatusBadgeHtml(status) {
+        const normalized = String(status || "").toUpperCase();
+        if (normalized === "CALLED") {
+            return '<span class="queue-badge badge-called">Calling</span>';
+        }
+        if (normalized === "PAUSED") {
+            return '<span class="queue-badge badge-paused">Paused</span>';
+        }
+        if (normalized === "RESUMED") {
+            return '<span class="queue-badge badge-resumed">Resuming</span>';
+        }
+        if (normalized === "WAITING") {
+            return '<span class="queue-badge badge-waiting">Waiting</span>';
+        }
+        if (normalized === "NOT_IN_QUEUE") {
+            return '<span class="queue-badge badge-neutral">Not In Queue</span>';
+        }
+        return `<span class="queue-badge badge-neutral">${normalized || "-"}</span>`;
+    }
+
+    async function loadDoctorCalendarStats() {
+        const res = await fetch(`/api/appointments/stats/?year=${doctorCalendarYear}&month=${doctorCalendarMonth}`, {
+            credentials: "same-origin",
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            return;
+        }
+        renderDoctorCalendar(data.year, data.month, data.daywise || {}, data.revenue_daywise || {});
+        renderDoctorMonthlyStats(data.monthwise || {}, data.revenue_monthwise || {});
+        renderDoctorRevenueSummary(data.year, data.month, data.revenue_daywise || {}, data.revenue_monthwise || {});
+    }
+
+    function doctorPreviousMonth() {
+        doctorCalendarMonth -= 1;
+        if (doctorCalendarMonth < 1) {
+            doctorCalendarMonth = 12;
+            doctorCalendarYear -= 1;
+        }
+        loadDoctorCalendarStats();
+    }
+
+    function doctorNextMonth() {
+        doctorCalendarMonth += 1;
+        if (doctorCalendarMonth > 12) {
+            doctorCalendarMonth = 1;
+            doctorCalendarYear += 1;
+        }
+        loadDoctorCalendarStats();
+    }
+
+    function renderDoctorCalendar(year, month, daywise, revenueDaywise) {
+        const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        const weekDays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+        document.getElementById("doctorCalendarMonthYear").textContent = `${monthNames[month - 1]} ${year}`;
+
+        const firstDay = new Date(year, month - 1, 1).getDay();
+        const daysInMonth = new Date(year, month, 0).getDate();
+        const todayStr = new Date().toISOString().split("T")[0];
+
+        let html = "<thead><tr>";
+        weekDays.forEach((day) => {
+            html += `<th>${day}</th>`;
+        });
+        html += "</tr></thead><tbody><tr>";
+
+        for (let i = 0; i < firstDay; i++) {
+            html += '<td style="background:#fafafa;"></td>';
+        }
+
+        let dayCounter = firstDay;
+        for (let day = 1; day <= daysInMonth; day++) {
+            const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+            const count = daywise[dateStr] || 0;
+            const revenue = revenueDaywise[dateStr] || "0.00";
+            const isToday = todayStr === dateStr;
+            const bgColor = isToday ? "#e8f4f8" : (count > 0 ? "#fff3cd" : "#fff");
+            const borderColor = isToday ? "#17a2b8" : "#ddd";
+
+            html += `<td style="background:${bgColor}; border:2px solid ${borderColor};">
+                <div style="font-weight:${isToday ? "700" : "500"};">${day}</div>
+                <div style="color:#666; font-size:11px;">Appt: ${count}</div>
+                <div style="color:#1a4d6d; font-size:11px;">Rs ${revenue}</div>
+            </td>`;
+
+            dayCounter += 1;
+            if (dayCounter % 7 === 0 && day < daysInMonth) {
+                html += "</tr><tr>";
+            }
+        }
+
+        while (dayCounter % 7 !== 0) {
+            html += '<td style="background:#fafafa;"></td>';
+            dayCounter += 1;
+        }
+
+        html += "</tr></tbody>";
+        document.getElementById("doctorCalendar").innerHTML = html;
+    }
+
+    function renderDoctorMonthlyStats(monthwise, revenueMonthwise) {
+        const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        let totalCount = 0;
+        let totalRevenue = 0;
+        let html = `<div style="display:grid; grid-template-columns:1fr auto auto; gap:0 12px; font-size:12px; color:#888; padding:2px 0 4px; border-bottom:1px solid #ddd;">
+            <span>Month</span><span style="text-align:right;">Appts</span><span style="text-align:right;">Revenue</span>
+        </div>`;
+        for (let month = 1; month <= 12; month++) {
+            const count = monthwise[month] || 0;
+            const revenue = parseFloat(revenueMonthwise[month] || "0") || 0;
+            totalCount += count;
+            totalRevenue += revenue;
+            html += `<div style="display:grid; grid-template-columns:1fr auto auto; gap:0 12px; padding:4px 0; border-bottom:1px solid #f0f0f0;">
+                <span>${monthNames[month - 1]}</span>
+                <span style="text-align:right; font-weight:600;">${count}</span>
+                <span style="text-align:right; color:#1a4d6d;">Rs ${revenue.toFixed(2)}</span>
+            </div>`;
+        }
+        html += `<div style="display:grid; grid-template-columns:1fr auto auto; gap:0 12px; padding:6px 0; margin-top:4px; border-top:2px solid #ddd; font-weight:700;">
+            <span>Total</span>
+            <span style="text-align:right;">${totalCount}</span>
+            <span style="text-align:right; color:#1a4d6d;">Rs ${totalRevenue.toFixed(2)}</span>
+        </div>`;
+        document.getElementById("doctorMonthlyStats").innerHTML = html;
+    }
+
+    function renderDoctorRevenueSummary(year, month, revenueDaywise, revenueMonthwise) {
+        const summaryEl = document.getElementById("doctorRevenueSummary");
+        if (!summaryEl) {
+            return;
+        }
+
+        const today = new Date();
+        const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+        const todayRevenue = parseFloat(revenueDaywise[todayStr] || "0") || 0;
+        const selectedMonthRevenue = parseFloat(revenueMonthwise[month] || "0") || 0;
+
+        summaryEl.innerHTML = `
+            <div style="display:flex; gap:8px;">
+                <div style="flex:1; background:#fff; border:1px solid #cfe3f6; border-radius:4px; padding:6px 10px;">
+                    <div style="font-size:11px; color:#666; margin-bottom:2px;">This Month</div>
+                    <div style="color:#0d5ea8; font-weight:700;">Rs ${selectedMonthRevenue.toFixed(2)}</div>
+                </div>
+                <div style="flex:1; background:#fff; border:1px solid #cfe3f6; border-radius:4px; padding:6px 10px;">
+                    <div style="font-size:11px; color:#666; margin-bottom:2px;">Today</div>
+                    <div style="color:#0d5ea8; font-weight:700;">Rs ${todayRevenue.toFixed(2)}</div>
+                </div>
+            </div>`;
+    }
 
 
     async function loadAppointments(dateType, options = {}) {
@@ -91,40 +371,136 @@
                     return;
                 }
 
-                loadedDoctorId = data.doctor_id || null;
+                const activeDoctorIds = Array.from(new Set((data.appointments || []).map((apt) => Number(apt.doctor_id)).filter(Boolean)));
+                loadedDoctorId = activeDoctorIds.length === 1 ? activeDoctorIds[0] : (data.doctor_id || null);
                 loadedSlotDate = data.date || null;
                 listEl.className = "result-box result-success";
+                const sortedAppointments = [...data.appointments].sort((a, b) => {
+                    const statusPriority = {
+                        CALLED: 0,
+                        RESUMED: 1,
+                        WAITING: 2,
+                        PAUSED: 3,
+                        NOT_IN_QUEUE: 4,
+                        COMPLETED: 9,
+                        CANCELLED: 10,
+                        NO_SHOW: 11,
+                    };
+                    const aQueue = String(a.queue_status || "NOT_IN_QUEUE").toUpperCase();
+                    const bQueue = String(b.queue_status || "NOT_IN_QUEUE").toUpperCase();
+                    const aApp = String(a.status || "").toUpperCase();
+                    const bApp = String(b.status || "").toUpperCase();
+
+                    // Always force terminal rows to bottom.
+                    const doneStatuses = new Set(["COMPLETED", "CANCELLED", "NO_SHOW"]);
+                    const aDone = doneStatuses.has(aApp) || doneStatuses.has(aQueue);
+                    const bDone = doneStatuses.has(bApp) || doneStatuses.has(bQueue);
+                    if (aDone !== bDone) return aDone ? 1 : -1;
+
+                    // For active rows, emergencies should always appear first.
+                    const aEmergency = Boolean(a.is_emergency);
+                    const bEmergency = Boolean(b.is_emergency);
+                    if (aEmergency !== bEmergency) return aEmergency ? -1 : 1;
+
+                    const aPriority = statusPriority[aQueue] ?? 5;
+                    const bPriority = statusPriority[bQueue] ?? 5;
+                    if (aPriority !== bPriority) return aPriority - bPriority;
+
+                    const aToken = Number(a.queue_token || 999999);
+                    const bToken = Number(b.queue_token || 999999);
+                    return aToken - bToken;
+                });
+                const filteredAppointments = sortedAppointments.filter((apt) => {
+                    if (paymentStatusFilter === "ALL") {
+                        return true;
+                    }
+                    const currentStatus = String(apt.payment_status || "NOT_GENERATED").toUpperCase();
+                    const recoveredPct = Number(apt.payment_recovered_percentage || 0);
+                    if (paymentStatusFilter === "PARTIAL") {
+                        return currentStatus === "PENDING" && recoveredPct > 0;
+                    }
+                    if (paymentStatusFilter === "PENDING") {
+                        return currentStatus === "PENDING" && recoveredPct === 0;
+                    }
+                    return currentStatus === paymentStatusFilter;
+                });
+                const filterLabelMap = {
+                    ALL: "All",
+                    PARTIAL: "Partial",
+                    PENDING: "Pending",
+                    DONE: "Done",
+                    NOT_GENERATED: "Not Generated",
+                };
                 let html = "<strong>Doctor: " + (data.doctor_name || "-") + "</strong><br>";
-                html += "<strong>Date: " + (data.date || "-") + "</strong><br><br>";
-                html += "<table style='width:100%; border-collapse:collapse; font-size:0.95rem; line-height:1.8;'>";
+                html += "<strong>Date: " + (data.date || "-") + "</strong>";
+                html += " | <strong>Filter:</strong> " + (filterLabelMap[paymentStatusFilter] || paymentStatusFilter);
+                html += " | <strong>Showing:</strong> " + filteredAppointments.length + " / " + sortedAppointments.length;
+                html += "<br><br>";
+                html += "<table style='width:100%; border-collapse:collapse; font-size:0.86rem; line-height:1.3;'>";
                 html += "<tr style='background:#dce8ff; font-weight:bold;'>";
-                html += "<td style='padding:10px; border:1px solid #c6d7fa;'>#</td>";
-                html += "<td style='padding:10px; border:1px solid #c6d7fa;'>OPD No.</td>";
-                html += "<td style='padding:10px; border:1px solid #c6d7fa;'>Patient Name</td>";
-                html += "<td style='padding:10px; border:1px solid #c6d7fa;'>Mobile</td>";
-                html += "<td style='padding:10px; border:1px solid #c6d7fa;'>Time</td>";
-                html += "<td style='padding:10px; border:1px solid #c6d7fa;'>Status</td>";
-                html += "<td style='padding:10px; border:1px solid #c6d7fa;'>Queue Token</td>";
-                html += "<td style='padding:10px; border:1px solid #c6d7fa;'>Queue Status</td>";
-                html += "<td style='padding:10px; border:1px solid #c6d7fa;'>Action</td>";
+                html += "<td style='padding:6px; border:1px solid #c6d7fa;'>#</td>";
+                html += "<td style='padding:6px; border:1px solid #c6d7fa;'>OPD No.</td>";
+                html += "<td style='padding:6px; border:1px solid #c6d7fa;'>Patient Name</td>";
+                html += "<td style='padding:6px; border:1px solid #c6d7fa;'>Mobile</td>";
+                html += "<td style='padding:6px; border:1px solid #c6d7fa;'>Time</td>";
+                html += "<td style='padding:6px; border:1px solid #c6d7fa;'>Status</td>";
+                html += "<td style='padding:6px; border:1px solid #c6d7fa;'>Queue Token</td>";
+                html += "<td style='padding:6px; border:1px solid #c6d7fa;'>Queue Status</td>";
+                html += "<td style='padding:6px; border:1px solid #c6d7fa;'>Payment Status</td>";
+                html += "<td style='padding:6px; border:1px solid #c6d7fa;'>Action</td>";
                 html += "</tr>";
-                data.appointments.forEach((apt, i) => {
+                filteredAppointments.forEach((apt, i) => {
                     const isCompleted = String(apt.status || "").toUpperCase() === "COMPLETED";
                     const isCalled = String(apt.queue_status || "") === "CALLED";
                     const rowClass = isCalled ? " class='called-row'" : "";
                     html += `<tr${rowClass}>`;
-                    html += "<td style='padding:10px; border:1px solid #c6d7fa;'>" + (i + 1) + "</td>";
-                    html += "<td style='padding:10px; border:1px solid #c6d7fa;'>" + (apt.opd_number || "-") + "</td>";
-                    html += "<td style='padding:10px; border:1px solid #c6d7fa;'><strong>" + (apt.patient_name || "-") + "</strong></td>";
-                    html += "<td style='padding:10px; border:1px solid #c6d7fa;'>" + (apt.mobile || "-") + "</td>";
-                    html += "<td style='padding:10px; border:1px solid #c6d7fa;'>" + (apt.start_time || "-") + "</td>";
-                    html += "<td style='padding:10px; border:1px solid #c6d7fa;'><strong>" + (apt.status || "-") + "</strong></td>";
-                    html += "<td style='padding:10px; border:1px solid #c6d7fa;'>" + (apt.queue_token || "-") + "</td>";
-                    html += "<td style='padding:10px; border:1px solid #c6d7fa;'><strong>" + (apt.queue_status || "-") + "</strong></td>";
-                    html += "<td style='padding:10px; border:1px solid #c6d7fa;'>";
+                    html += "<td style='padding:6px; border:1px solid #c6d7fa;'>" + (i + 1) + "</td>";
+                    html += "<td style='padding:6px; border:1px solid #c6d7fa;'>" + (apt.opd_number || "-") + "</td>";
+                    html += "<td style='padding:6px; border:1px solid #c6d7fa;'><strong>" + (apt.patient_name || "-") + "</strong></td>";
+                    html += "<td style='padding:6px; border:1px solid #c6d7fa;'>" + (apt.mobile || "-") + "</td>";
+                    html += "<td style='padding:6px; border:1px solid #c6d7fa;'>" + (apt.start_time || "-") + "</td>";
+                    html += "<td style='padding:6px; border:1px solid #c6d7fa;'><strong>" + (apt.status || "-") + "</strong></td>";
+                    html += "<td style='padding:6px; border:1px solid #c6d7fa;'>" + (apt.queue_token || "-") + "</td>";
+                    const emergencyBadge = apt.is_emergency
+                        ? '<span class="queue-badge badge-emergency">Emergency</span>'
+                        : "";
+                    html += "<td style='padding:6px; border:1px solid #c6d7fa;'>" + queueStatusBadgeHtml(apt.queue_status || "-") + emergencyBadge + "</td>";
+                    const paymentStatusRaw = String(apt.payment_status || "NOT_GENERATED").toUpperCase();
+                    const recoveredPct = Number(apt.payment_recovered_percentage || 0);
+                    const pendingAmt = apt.payment_pending_amount || "0.00";
+                    const isPartial = paymentStatusRaw === "PENDING" && recoveredPct > 0;
+                    const paymentStatusText = apt.payment_status_display || (
+                        paymentStatusRaw === "DONE"
+                            ? "Done"
+                            : (isPartial ? `Partial (${recoveredPct}% recovered)` : (paymentStatusRaw === "PENDING" ? "Pending" : "Not Generated"))
+                    );
+                    const paymentColor = paymentStatusRaw === "DONE" ? "#1f7a1f" : (isPartial ? "#9a3412" : (paymentStatusRaw === "PENDING" ? "#8a5a00" : "#666"));
+                    let paymentDetail = isPartial ? `<div style='font-size:0.74rem; color:#6b7280; margin-top:2px;'>Pending: Rs ${pendingAmt}</div>` : "";
+
+                    // Add RCT recovery information if available
+                    if (apt.rct_recovery_info && apt.rct_recovery_info.recovery_stages && apt.rct_recovery_info.recovery_stages.length > 0) {
+                        const rctInfo = apt.rct_recovery_info;
+                        const caseTotal = parseFloat(rctInfo.total_case_amount || "0");
+                        const recoveredTotal = parseFloat(rctInfo.total_recovered_amount || "0");
+                        const opdFeeAmt = parseFloat(rctInfo.opd_fee_amount || "0");
+                        const maxRecoveredPct = rctInfo.total_recovered_percentage || 0;
+                        const totalPaidAmt = opdFeeAmt + recoveredTotal;
+                        const pendingRctAmt = (caseTotal - totalPaidAmt).toFixed(2);
+                        paymentDetail += `<div style='font-size:0.72rem; color:#0369a1; margin-top:3px; border-top:1px solid #ddd; padding-top:3px;'>`;
+                        paymentDetail += `<strong>RCT Case:</strong> Rs ${caseTotal.toFixed(2)}<br />`;
+                        paymentDetail += `OPD Fee: Rs ${opdFeeAmt.toFixed(2)}<br />`;
+                        paymentDetail += `Recovered: ${maxRecoveredPct}% (Rs ${recoveredTotal.toFixed(2)})<br />`;
+                        paymentDetail += `Pending: Rs ${pendingRctAmt}`;
+                        rctInfo.recovery_stages.forEach((stage) => {
+                            paymentDetail += `<br /><small>• ${stage.recovery_percent}% (Sitting ${stage.sitting_number || '?'}/${stage.total_sittings || '?'}): Rs ${stage.amount}</small>`;
+                        });
+                        paymentDetail += `</div>`;
+                    }
+                    html += "<td style='padding:6px; border:1px solid #c6d7fa;'><strong style='color:" + paymentColor + ";'>" + paymentStatusText + "</strong>" + paymentDetail + "</td>";
+                    html += "<td style='padding:6px; border:1px solid #c6d7fa;'>";
                     html += isCompleted
-                        ? "<button type='button' disabled style='padding:0.3rem 0.75rem; background:#94a3b8; color:#fff; border:none; border-radius:6px; cursor:not-allowed; font-size:0.88rem;'>Consult</button>"
-                        : "<button type='button' onclick=\"consultAppointment(" + apt.appointment_id + ")\" style='padding:0.3rem 0.75rem; background:#1a4d6d; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.88rem;'>Consult</button>";
+                        ? "<button type='button' disabled style='padding:0.22rem 0.55rem; background:#94a3b8; color:#fff; border:none; border-radius:6px; cursor:not-allowed; font-size:0.8rem;'>Consult</button>"
+                        : "<button type='button' onclick=\"consultAppointment(" + apt.appointment_id + ")\" style='padding:0.22rem 0.55rem; background:#1a4d6d; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.8rem;'>Consult</button>";
                     html += "</td>";
                     html += "</tr>";
                 });
@@ -236,6 +612,80 @@
             resultEl.textContent = msg;
         }
     }
+
+    async function markDayUnavailable() {
+        const resultEl = document.getElementById("doctorEmergencyRescheduleResult");
+        const btn = document.getElementById("doctorEmergencyUnavailableBtn");
+        if (!loadedDoctorId) {
+            resultEl.className = "result-box result-error";
+            resultEl.textContent = "Doctor context not loaded yet. Please wait for appointments to load and retry.";
+            return;
+        }
+        const reason = window.prompt("Reason for emergency unavailability (optional):", "Doctor emergency leave");
+        if (reason === null) {
+            return;
+        }
+
+        btn.disabled = true;
+        resultEl.className = "result-box";
+        resultEl.textContent = "Rescheduling today's appointments...";
+
+        try {
+            const body = new URLSearchParams({
+                reason: reason || "doctor_emergency_unavailable",
+                doctor_id: String(loadedDoctorId),
+                source_date: String(loadedSlotDate || ""),
+            });
+            const res = await fetch("/api/doctors/day-unavailable/", {
+                method: "POST",
+                headers: { "X-CSRFToken": getCSRFToken(), "Content-Type": "application/x-www-form-urlencoded" },
+                body,
+                credentials: "same-origin",
+            });
+            const data = await res.json().catch(() => ({}));
+
+            if (res.status === 202) {
+                resultEl.className = "result-box result-success";
+                resultEl.textContent = "Overflow detected. Reception has been notified to decide exceed capacity or cascade to next day.";
+                return;
+            }
+
+            if (!res.ok) {
+                const msg = {
+                    no_appointments_for_day: "No active appointments found for today.",
+                    doctor_profile_not_found: "Doctor profile not linked to this login.",
+                    doctor_not_in_scope: "Selected doctor is not mapped to your account.",
+                }[data.error] || data.error || "Unable to process emergency unavailability.";
+                resultEl.className = "result-box result-error";
+                const debug = data.debug
+                    ? ` (evaluated_doctor_id=${data.debug.evaluated_doctor_id}, source_date=${data.debug.source_date})`
+                    : "";
+                resultEl.textContent = msg + debug;
+                return;
+            }
+
+            const allocation = data.data && data.data.allocations ? data.data.allocations : {};
+            const allocationText = Object.keys(allocation).map((day) => `${day}: ${allocation[day]}`).join(", ");
+            resultEl.className = "result-box result-success";
+            resultEl.textContent = allocationText
+                ? `Appointments shifted successfully. ${allocationText}`
+                : "Appointments shifted successfully.";
+            loadAppointments("today", { silent: false });
+        } catch (err) {
+            resultEl.className = "result-box result-error";
+            resultEl.textContent = "Network error: " + err.message;
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    document.getElementById("doctorEmergencyUnavailableBtn").addEventListener("click", markDayUnavailable);
+    document.getElementById("doctorPaymentStatusFilter").addEventListener("change", (e) => {
+        paymentStatusFilter = String(e.target.value || "ALL").toUpperCase();
+        if (loadedDateType) {
+            loadAppointments(loadedDateType, { silent: false });
+        }
+    });
 
     // Keep doctor list in sync with queue updates from reception/consultation flow.
     loadAppointments("today", { silent: false });

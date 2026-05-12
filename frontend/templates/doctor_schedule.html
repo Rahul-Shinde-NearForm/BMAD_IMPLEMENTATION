@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
-{% block title %}Doctor Schedule Management - OPD Management System{% endblock %}
-{% block page_title %}Doctor Schedule Management{% endblock %}
+{% block title %}Doctor Schedule and OPD fee - OPD Management System{% endblock %}
+{% block page_title %}Doctor Schedule and OPD fee{% endblock %}
 
 {% block content %}
 <div class="container">
@@ -9,77 +9,308 @@
         <button class="btn-link" onclick="window.location.href = document.referrer || '/'">&#8592; Back</button>
     </section>
 
-    <section>
-        <h2>Set Doctor Schedule &amp; Daily Capacity</h2>
-        <p style="color: #555; font-size: 14px;">
-            Select the days this doctor is available and set the maximum number of patients per day.
-        </p>
+    <div style="margin-bottom: 24px; max-width: 400px;">
+        <label style="font-weight: 600; font-size: 15px;">
+            Select Doctor
+            <select id="doctorSelect"
+                style="display:block; width:100%; margin-top:6px; padding:8px 10px; border:1px solid #c5cfe0; border-radius:6px; font-size:14px;">
+                <option value="">-- Select a doctor --</option>
+            </select>
+        </label>
+        <div id="doctorInfo" style="margin-top:8px; font-size:13px; color:#555; display:none;"></div>
+    </div>
 
-        <form id="scheduleForm" class="form-grid" style="max-width: 480px;">
-            <label>
-                Doctor Name
-                <input type="text" name="doctor_name" placeholder="e.g. Dr. Sharma" required />
-            </label>
-            <label>
-                Specialty
-                <input type="text" name="specialty" placeholder="e.g. General Medicine" required />
-            </label>
-            <div style="grid-column: 1 / -1;">
-                <span style="font-size: 14px; font-weight: 600; display: block; margin-bottom: 8px;">Day-wise
-                    Capacity</span>
-                <div style="display:grid; gap:8px;">
-                    <label data-day-row
-                        style="display:grid; grid-template-columns: 110px 1fr; gap:10px; align-items:center; font-weight:normal;">
-                        <span><input type="checkbox" name="days" value="0" /> Monday</span>
-                        <input type="number" min="1" value="50" data-day-capacity="0" disabled />
-                    </label>
-                    <label data-day-row
-                        style="display:grid; grid-template-columns: 110px 1fr; gap:10px; align-items:center; font-weight:normal;">
-                        <span><input type="checkbox" name="days" value="1" /> Tuesday</span>
-                        <input type="number" min="1" value="50" data-day-capacity="1" disabled />
-                    </label>
-                    <label data-day-row
-                        style="display:grid; grid-template-columns: 110px 1fr; gap:10px; align-items:center; font-weight:normal;">
-                        <span><input type="checkbox" name="days" value="2" /> Wednesday</span>
-                        <input type="number" min="1" value="50" data-day-capacity="2" disabled />
-                    </label>
-                    <label data-day-row
-                        style="display:grid; grid-template-columns: 110px 1fr; gap:10px; align-items:center; font-weight:normal;">
-                        <span><input type="checkbox" name="days" value="3" /> Thursday</span>
-                        <input type="number" min="1" value="50" data-day-capacity="3" disabled />
-                    </label>
-                    <label data-day-row
-                        style="display:grid; grid-template-columns: 110px 1fr; gap:10px; align-items:center; font-weight:normal;">
-                        <span><input type="checkbox" name="days" value="4" /> Friday</span>
-                        <input type="number" min="1" value="50" data-day-capacity="4" disabled />
-                    </label>
-                    <label data-day-row
-                        style="display:grid; grid-template-columns: 110px 1fr; gap:10px; align-items:center; font-weight:normal;">
-                        <span><input type="checkbox" name="days" value="5" /> Saturday</span>
-                        <input type="number" min="1" value="50" data-day-capacity="5" disabled />
-                    </label>
-                    <label data-day-row
-                        style="display:grid; grid-template-columns: 110px 1fr; gap:10px; align-items:center; font-weight:normal;">
-                        <span><input type="checkbox" name="days" value="6" /> Sunday</span>
-                        <input type="number" min="1" value="50" data-day-capacity="6" disabled />
-                    </label>
+    <div style="display: flex; gap: 40px; flex-wrap: wrap; align-items: flex-start;">
+        <section style="flex: 1; min-width: 350px;">
+            <h2>Set Doctor Schedule &amp; Daily Capacity</h2>
+            <p style="color: #555; font-size: 14px;">
+                Select the days this doctor is available and set the maximum number of patients per day.
+            </p>
+
+            <form id="scheduleForm" class="form-grid" style="max-width: 480px;">
+                <input type="hidden" name="doctor_name" id="scheduleDoctorName" />
+                <input type="hidden" name="specialty" id="scheduleDoctorSpecialty" />
+                <div style="grid-column: 1 / -1;">
+                    <span style="font-size: 14px; font-weight: 600; display: block; margin-bottom: 8px;">Day-wise
+                        Capacity</span>
+                    <div style="display:grid; gap:8px;">
+                        <label data-day-row
+                            style="display:grid; grid-template-columns: 110px 1fr; gap:10px; align-items:center; font-weight:normal;">
+                            <span><input type="checkbox" name="days" value="0" /> Monday</span>
+                            <input type="number" min="1" value="50" data-day-capacity="0" disabled />
+                        </label>
+                        <label data-day-row
+                            style="display:grid; grid-template-columns: 110px 1fr; gap:10px; align-items:center; font-weight:normal;">
+                            <span><input type="checkbox" name="days" value="1" /> Tuesday</span>
+                            <input type="number" min="1" value="50" data-day-capacity="1" disabled />
+                        </label>
+                        <label data-day-row
+                            style="display:grid; grid-template-columns: 110px 1fr; gap:10px; align-items:center; font-weight:normal;">
+                            <span><input type="checkbox" name="days" value="2" /> Wednesday</span>
+                            <input type="number" min="1" value="50" data-day-capacity="2" disabled />
+                        </label>
+                        <label data-day-row
+                            style="display:grid; grid-template-columns: 110px 1fr; gap:10px; align-items:center; font-weight:normal;">
+                            <span><input type="checkbox" name="days" value="3" /> Thursday</span>
+                            <input type="number" min="1" value="50" data-day-capacity="3" disabled />
+                        </label>
+                        <label data-day-row
+                            style="display:grid; grid-template-columns: 110px 1fr; gap:10px; align-items:center; font-weight:normal;">
+                            <span><input type="checkbox" name="days" value="4" /> Friday</span>
+                            <input type="number" min="1" value="50" data-day-capacity="4" disabled />
+                        </label>
+                        <label data-day-row
+                            style="display:grid; grid-template-columns: 110px 1fr; gap:10px; align-items:center; font-weight:normal;">
+                            <span><input type="checkbox" name="days" value="5" /> Saturday</span>
+                            <input type="number" min="1" value="50" data-day-capacity="5" disabled />
+                        </label>
+                        <label data-day-row
+                            style="display:grid; grid-template-columns: 110px 1fr; gap:10px; align-items:center; font-weight:normal;">
+                            <span><input type="checkbox" name="days" value="6" /> Sunday</span>
+                            <input type="number" min="1" value="50" data-day-capacity="6" disabled />
+                        </label>
+                    </div>
+                    <small style="color: #777;">Set different capacity per selected day. Example: Monday 20, Tuesday
+                        50.</small><br />
+                    <small id="daysError" style="color: #c0392b; display: none;">Please select at least one day and set
+                        valid capacities.</small>
                 </div>
-                <small style="color: #777;">Set different capacity per selected day. Example: Monday 20, Tuesday
-                    50.</small><br />
-                <small id="daysError" style="color: #c0392b; display: none;">Please select at least one day and set
-                    valid capacities.</small>
-            </div>
 
-            <div style="margin-top: 8px;">
-                <button type="submit">Save Schedule</button>
-            </div>
-        </form>
+                <div style="margin-top: 8px;">
+                    <button type="submit" id="saveScheduleBtn" disabled>Save Schedule</button>
+                </div>
+            </form>
 
-        <div id="scheduleResult" class="result-box" style="display:none; margin-top: 1rem;"></div>
-    </section>
+            <div id="scheduleResult" class="result-box" style="display:none; margin-top: 1rem;"></div>
+
+            <h2 style="margin-top: 22px;">Emergency Control</h2>
+            <p style="color: #555; font-size: 14px;">
+                Mark selected doctor as unavailable for today and auto-reschedule active appointments.
+            </p>
+            <div style="display:flex; gap:10px; align-items:center; margin-top:8px;">
+                <button type="button" id="receptionEmergencyUnavailableBtn" disabled
+                    style="background:#b91c1c; color:#fff; border:none; border-radius:4px; padding:8px 12px; cursor:pointer;">
+                    Emergency: Unavailable Today
+                </button>
+            </div>
+            <div id="receptionEmergencyRescheduleResult" class="result-box" style="display:none; margin-top: 0.75rem;">
+            </div>
+        </section>
+
+        <section style="flex: 1; min-width: 350px;">
+            <h2>OPD Fee Setup</h2>
+            <p style="color: #555; font-size: 14px;">
+                Set consultation fees for new and existing patients.
+            </p>
+
+            <form id="opdFeeForm" class="form-grid" style="max-width: 480px;">
+                <input type="hidden" name="doctor_id" id="feeDoctorId" />
+                <label>
+                    OPD Fee - New Patient (Rs)
+                    <input type="number" name="opd_new_patient_fee" min="0" step="0.01" value="200.00" required />
+                </label>
+                <label>
+                    OPD Fee - Existing Patient (Rs)
+                    <input type="number" name="opd_existing_patient_fee" min="0" step="0.01" value="100.00" required />
+                </label>
+                <div style="margin-top: 8px;">
+                    <button type="submit" id="saveFeeBtn" disabled>Save OPD Fees</button>
+                </div>
+            </form>
+
+            <div id="opdFeeResult" class="result-box" style="display:none; margin-top: 1rem;"></div>
+        </section>
+    </div>
 </div>
 
 <script>
+    function getCSRFToken() {
+        const match = document.cookie.match(/csrftoken=([^;]+)/);
+        return match ? match[1] : "";
+    }
+
+    let allDoctors = [];
+
+    async function loadDoctorSelect() {
+        const res = await fetch("/api/doctors/list/", { credentials: "same-origin", cache: "no-store" });
+        const data = await res.json().catch(() => ({ items: [] }));
+        allDoctors = data.items || [];
+        const select = document.getElementById("doctorSelect");
+        select.innerHTML = '<option value="">-- Select a doctor --</option>' +
+            allDoctors.map((d) => `<option value="${d.id}">${d.name} (${d.specialty})</option>`).join("");
+    }
+
+    document.getElementById("doctorSelect").addEventListener("change", function () {
+        const doctorId = this.value;
+        const doctor = allDoctors.find((d) => String(d.id) === String(doctorId));
+
+        const infoBox = document.getElementById("doctorInfo");
+        const saveScheduleBtn = document.getElementById("saveScheduleBtn");
+        const saveFeeBtn = document.getElementById("saveFeeBtn");
+        const emergencyBtn = document.getElementById("receptionEmergencyUnavailableBtn");
+
+        if (!doctor) {
+            infoBox.style.display = "none";
+            document.getElementById("scheduleDoctorName").value = "";
+            document.getElementById("scheduleDoctorSpecialty").value = "";
+            document.getElementById("feeDoctorId").value = "";
+            saveScheduleBtn.disabled = true;
+            saveFeeBtn.disabled = true;
+            emergencyBtn.disabled = true;
+            return;
+        }
+
+        // Populate hidden fields for both forms
+        document.getElementById("scheduleDoctorName").value = doctor.name;
+        document.getElementById("scheduleDoctorSpecialty").value = doctor.specialty;
+        document.getElementById("feeDoctorId").value = doctor.id;
+
+        // Pre-fill OPD fee values with doctor's current fees
+        document.querySelector('#opdFeeForm [name="opd_new_patient_fee"]').value = parseFloat(doctor.opd_new_patient_fee || 200).toFixed(2);
+        document.querySelector('#opdFeeForm [name="opd_existing_patient_fee"]').value = parseFloat(doctor.opd_existing_patient_fee || 100).toFixed(2);
+
+        // Show doctor info
+        infoBox.innerHTML = `<strong>Selected:</strong> ${doctor.name} &nbsp;|&nbsp; <strong>Specialty:</strong> ${doctor.specialty}`;
+        infoBox.style.display = "block";
+
+        saveScheduleBtn.disabled = false;
+        saveFeeBtn.disabled = false;
+        emergencyBtn.disabled = false;
+    });
+
+    document.getElementById("receptionEmergencyUnavailableBtn").addEventListener("click", async function () {
+        const resultBox = document.getElementById("receptionEmergencyRescheduleResult");
+        const doctorId = (document.getElementById("doctorSelect").value || "").trim();
+        const doctor = allDoctors.find((d) => String(d.id) === String(doctorId));
+
+        if (!doctorId || !doctor) {
+            resultBox.className = "result-box result-error";
+            resultBox.textContent = "Please select a doctor first.";
+            resultBox.style.display = "block";
+            return;
+        }
+
+        const reason = window.prompt("Reason for emergency unavailability (optional):", "Doctor emergency leave");
+        if (reason === null) {
+            return;
+        }
+
+        const sourceDate = new Date().toISOString().split("T")[0];
+        this.disabled = true;
+        resultBox.className = "result-box";
+        resultBox.textContent = "Rescheduling today's appointments...";
+        resultBox.style.display = "block";
+
+        try {
+            const body = new URLSearchParams({
+                doctor_id: String(doctorId),
+                source_date: sourceDate,
+                reason: reason || "doctor_emergency_unavailable",
+            });
+            const res = await fetch("/api/doctors/day-unavailable/", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "X-CSRFToken": getCSRFToken(),
+                },
+                body: body.toString(),
+                credentials: "same-origin",
+            });
+            const data = await res.json().catch(() => ({}));
+
+            if (res.status === 202) {
+                resultBox.className = "result-box result-success";
+                resultBox.textContent = `${doctor.name}: Overflow detected. Reception decision is pending (exceed or cascade).`;
+                return;
+            }
+
+            if (!res.ok) {
+                const msg = {
+                    no_appointments_for_day: "No active appointments found for today.",
+                    doctor_not_found: "Doctor not found.",
+                    doctor_id_required: "Doctor selection is required.",
+                    invalid_doctor_id: "Invalid doctor selected.",
+                }[data.error] || data.error || "Unable to process emergency unavailability.";
+                resultBox.className = "result-box result-error";
+                resultBox.textContent = msg;
+                return;
+            }
+
+            const allocation = (data.data && data.data.allocations) || {};
+            const allocationText = Object.keys(allocation).map((day) => `${day}: ${allocation[day]}`).join(", ");
+            resultBox.className = "result-box result-success";
+            resultBox.textContent = allocationText
+                ? `${doctor.name}: Appointments shifted successfully. ${allocationText}`
+                : `${doctor.name}: Appointments shifted successfully.`;
+        } catch (err) {
+            resultBox.className = "result-box result-error";
+            resultBox.textContent = `Network error: ${err.message}`;
+        } finally {
+            this.disabled = false;
+        }
+    });
+
+    document.getElementById("opdFeeForm").addEventListener("submit", async function (e) {
+        e.preventDefault();
+
+        const resultBox = document.getElementById("opdFeeResult");
+        const doctorId = (document.getElementById("feeDoctorId").value || "").trim();
+        const newPatientFee = (this.elements.opd_new_patient_fee.value || "0");
+        const existingPatientFee = (this.elements.opd_existing_patient_fee.value || "0");
+
+        if (!doctorId) {
+            resultBox.className = "result-box result-error";
+            resultBox.textContent = "Please select a doctor first.";
+            resultBox.style.display = "block";
+            return;
+        }
+
+        resultBox.textContent = "Saving OPD fees...";
+        resultBox.style.display = "block";
+        resultBox.className = "result-box";
+
+        const body = new URLSearchParams({
+            doctor_id: doctorId,
+            opd_new_patient_fee: newPatientFee,
+            opd_existing_patient_fee: existingPatientFee,
+        });
+
+        try {
+            const res = await fetch("/api/doctors/opd-fee/update/", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "X-CSRFToken": getCSRFToken(),
+                },
+                body: body.toString(),
+                credentials: "same-origin",
+            });
+            const data = await res.json();
+
+            if (res.ok) {
+                // Update local doctors data so the values stay in sync
+                const doctor = allDoctors.find((d) => String(d.id) === String(doctorId));
+                if (doctor) {
+                    doctor.opd_new_patient_fee = data.data.opd_new_patient_fee;
+                    doctor.opd_existing_patient_fee = data.data.opd_existing_patient_fee;
+                }
+                resultBox.className = "result-box result-success";
+                resultBox.textContent = `OPD fees saved for ${data.data.doctor_name}:\n` +
+                    `New Patient: Rs ${parseFloat(data.data.opd_new_patient_fee).toFixed(2)}\n` +
+                    `Existing Patient: Rs ${parseFloat(data.data.opd_existing_patient_fee).toFixed(2)}`;
+            } else {
+                resultBox.className = "result-box result-error";
+                resultBox.textContent = data.error === "doctor_not_found"
+                    ? `Doctor not found. Please refresh and try again.`
+                    : `Error: ${data.error || JSON.stringify(data.details || data)}`;
+            }
+        } catch (err) {
+            resultBox.className = "result-box result-error";
+            resultBox.textContent = `Network error: ${err.message}`;
+        }
+    });
+
+    // Initialize day checkboxes
     Array.from(document.querySelectorAll('input[name="days"]')).forEach((checkbox) => {
         checkbox.addEventListener("change", (e) => {
             const day = e.target.value;
@@ -93,6 +324,15 @@
 
         const resultBox = document.getElementById("scheduleResult");
         const daysError = document.getElementById("daysError");
+        const doctorName = document.getElementById("scheduleDoctorName").value.trim();
+        const specialty = document.getElementById("scheduleDoctorSpecialty").value.trim();
+
+        if (!doctorName) {
+            resultBox.className = "result-box result-error";
+            resultBox.textContent = "Please select a doctor first.";
+            resultBox.style.display = "block";
+            return;
+        }
 
         const selectedDays = [...document.querySelectorAll('input[name="days"]:checked')];
         if (selectedDays.length === 0) {
@@ -114,26 +354,20 @@
         daysError.style.display = "none";
         resultBox.style.display = "none";
 
-        const csrfToken = (document.cookie.split(";").find(c => c.trim().startsWith("csrftoken=")) || "").split("=")[1] || "";
-        const fd = new FormData(this);
-        const doctorName = fd.get("doctor_name");
-        const specialty = fd.get("specialty");
-
-        // Use sensible defaults for backend-required fields the user doesn't need to fill
         const today = new Date();
         const rangeStart = today.toISOString().split("T")[0];
-        const rangeEnd = new Date(today.setFullYear(today.getFullYear() + 1)).toISOString().split("T")[0];
+        const rangeEnd = new Date(new Date().setFullYear(today.getFullYear() + 1)).toISOString().split("T")[0];
 
         const results = [];
         let hasError = false;
+        const dayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
         for (const item of dayCapacityEntries) {
-            const day = item.day;
             const body = new URLSearchParams({
                 doctor_name: doctorName,
                 specialty: specialty,
                 daily_patient_capacity: String(item.capacity),
-                day_of_week: day,
+                day_of_week: item.day,
                 start_time: "09:00",
                 end_time: "17:00",
                 slot_minutes: "15",
@@ -147,41 +381,31 @@
                     method: "POST",
                     headers: {
                         "Content-Type": "application/x-www-form-urlencoded",
-                        "X-CSRFToken": csrfToken,
+                        "X-CSRFToken": getCSRFToken(),
                     },
                     body: body.toString(),
                 });
-                const dayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-                const text = await resp.text();
                 let data = {};
-                try { data = JSON.parse(text); } catch (_) {
-                    hasError = true;
-                    results.push(dayNames[day] + ": server error (unexpected response)");
-                    continue;
-                }
+                try { data = await resp.json(); } catch (_) { }
                 if (resp.ok) {
-                    results.push(dayNames[day]);
+                    results.push(dayNames[item.day]);
                 } else {
                     hasError = true;
-                    results.push(dayNames[day] + ": ERROR — " + (data.error || JSON.stringify(data.details || data)));
+                    results.push(dayNames[item.day] + ": ERROR — " + (data.error || JSON.stringify(data.details || data)));
                 }
             } catch (err) {
                 hasError = true;
-                results.push("Day " + day + ": network error — " + err.message);
+                results.push(dayNames[item.day] + ": network error — " + err.message);
             }
         }
 
         resultBox.style.display = "block";
         resultBox.className = "result-box " + (hasError ? "result-error" : "result-success");
-        resultBox.style.fontWeight = "bold";
-        if (!hasError) {
-            resultBox.textContent =
-                "Schedule saved successfully for Dr. " + doctorName + ".\n" +
-                "Days: " + results.join(", ") + "\n" +
-                "Day-wise capacities saved.";
-        } else {
-            resultBox.textContent = results.join("\n");
-        }
+        resultBox.textContent = hasError
+            ? results.join("\n")
+            : `Schedule saved for ${doctorName}.\nDays: ${results.join(", ")}\nDay-wise capacities saved.`;
     });
+
+    loadDoctorSelect();
 </script>
 {% endblock %}

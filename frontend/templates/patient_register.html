@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
-{% block title %}Patient Registration - OPD Management System{% endblock %}
-{% block page_title %}Patient Registration{% endblock %}
+{% block title %}Register New Patient & appointment - OPD Management System{% endblock %}
+{% block page_title %}Register New Patient & appointment{% endblock %}
 
 {% block content %}
 <div class="container">
@@ -102,6 +102,10 @@
                             <option value="PHONE">MOBILE</option>
                         </select>
                     </label>
+                    <label style="display:flex; align-items:center; gap:0.5rem; margin-top:1.65rem;">
+                        <input type="checkbox" name="is_emergency" id="isEmergencyInput" />
+                        Mark as Emergency (priority queue)
+                    </label>
                 </div>
                 <button type="submit" class="appointment-submit">Register and Book Appointment</button>
             </section>
@@ -123,6 +127,9 @@
     </div>
 
     <script>
+        // Global variable to store doctor data
+        let doctorsData = [];
+
         function getCSRFToken() {
             const match = document.cookie.match(/csrftoken=([^;]+)/);
             return match ? match[1] : "";
@@ -136,6 +143,19 @@
                 .replace(/>/g, "&gt;")
                 .replace(/\"/g, "&quot;")
                 .replace(/'/g, "&#039;");
+        }
+
+        function autoPopulateOpdFee() {
+            const form = document.getElementById("patientRegisterForm");
+            const doctorId = form.elements.doctor_id.value;
+            const billingForm = document.getElementById("patientBillingForm");
+
+            if (!doctorId || !billingForm) return;
+
+            const selectedDoctor = doctorsData.find((d) => String(d.id) === String(doctorId));
+            if (selectedDoctor && selectedDoctor.opd_new_patient_fee) {
+                billingForm.elements.amount.value = selectedDoctor.opd_new_patient_fee;
+            }
         }
 
         function renderInvoiceCard(invoicePayload) {
@@ -213,34 +233,42 @@
 
         async function loadDoctors() {
             const form = document.getElementById("patientRegisterForm");
-            const slotDate = form.elements.slot_date.value;
             const currentDoctor = form.elements.doctor_id.value;
-            const params = new URLSearchParams();
 
-            if (slotDate) {
-                params.set("slot_date", slotDate);
+            try {
+                const res = await fetch(`/api/doctors/list/`, { credentials: "same-origin", cache: "no-store" });
+                if (!res.ok) {
+                    console.error("Doctor list API error:", res.status, res.statusText);
+                    return;
+                }
+                const data = await res.json();
+                if (!data || typeof data.items === "undefined") {
+                    console.error("Invalid API response format", data);
+                    return;
+                }
+                const select = form.elements.doctor_id;
+                const items = data.items || [];
+                doctorsData = items;  // Store doctors data globally
+                select.innerHTML = '<option value="">Select doctor</option>' + items.map((doctor) => (
+                    `<option value="${doctor.id}">${doctor.name}</option>`
+                )).join("");
+
+                if (currentDoctor && items.some((doctor) => String(doctor.id) === currentDoctor)) {
+                    select.value = currentDoctor;
+                    autoPopulateOpdFee();
+                } else if (items.length > 0) {
+                    // Pick earliest-added doctor as default (lowest id).
+                    const firstAddedDoctor = items.reduce((earliest, doctor) => (
+                        Number(doctor.id) < Number(earliest.id) ? doctor : earliest
+                    ), items[0]);
+                    select.value = String(firstAddedDoctor.id);
+                    autoPopulateOpdFee();
+                }
+
+                fetchNextToken();
+            } catch (error) {
+                console.error("Error loading doctors:", error);
             }
-
-            const query = params.toString() ? `?${params.toString()}` : "";
-            const res = await fetch(`/api/doctors/list/${query}`, { credentials: "same-origin" });
-            const data = await res.json().catch(() => ({ items: [] }));
-            const select = form.elements.doctor_id;
-            const items = data.items || [];
-            select.innerHTML = '<option value="">Select doctor</option>' + items.map((doctor) => (
-                `<option value="${doctor.id}">${doctor.name}</option>`
-            )).join("");
-
-            if (currentDoctor && items.some((doctor) => String(doctor.id) === currentDoctor)) {
-                select.value = currentDoctor;
-            } else if (items.length > 0) {
-                // Pick earliest-added doctor as default (lowest id).
-                const firstAddedDoctor = items.reduce((earliest, doctor) => (
-                    Number(doctor.id) < Number(earliest.id) ? doctor : earliest
-                ), items[0]);
-                select.value = String(firstAddedDoctor.id);
-            }
-
-            fetchNextToken();
         }
 
         async function fetchNextToken() {
@@ -290,6 +318,7 @@
             registerPayload.delete("token");
             registerPayload.delete("visit_type");
             registerPayload.delete("channel");
+            registerPayload.delete("is_emergency");
 
             const res = await fetch(form.action, {
                 method: "POST",
@@ -305,6 +334,8 @@
             messageBox.style.display = "block";
 
             if (res.ok) {
+                const isEmergency = formData.get("is_emergency") === "on" || formData.get("is_emergency") === "true";
+
                 const appointmentPayload = new URLSearchParams({
                     patient_id: data.patient_id,
                     doctor_id: formData.get("doctor_id") || "",
@@ -314,7 +345,17 @@
                     channel: formData.get("channel") || "WALK_IN",
                 });
 
-                const appointmentRes = await fetch("/api/appointments/book/", {
+                // Route to emergency endpoint if emergency is checked
+                const appointmentEndpoint = isEmergency ? "/api/appointments/add-emergency/" : "/api/appointments/book/";
+
+                // Emergency endpoint ignores slot_date, token, and channel
+                if (isEmergency) {
+                    appointmentPayload.delete("slot_date");
+                    appointmentPayload.delete("token");
+                    appointmentPayload.delete("channel");
+                }
+
+                const appointmentRes = await fetch(appointmentEndpoint, {
                     method: "POST",
                     headers: { "X-CSRFToken": getCSRFToken(), "Content-Type": "application/x-www-form-urlencoded" },
                     body: appointmentPayload,
@@ -324,9 +365,10 @@
 
                 if (appointmentRes.ok) {
                     messageBox.className = "result-box result-success";
+                    const tokenText = isEmergency ? "(Emergency - Priority Queue)" : `Token: ${formData.get("token") || "-"}`;
                     messageBox.textContent =
                         `Patient successfully added. OPD Number: ${data.opd_number}\n` +
-                        `Appointment booked successfully. Token: ${formData.get("token") || "-"}`;
+                        `Appointment booked successfully. ${tokenText}`;
 
                     const billingForm = document.getElementById("patientBillingForm");
                     if (billingForm) {
@@ -337,8 +379,8 @@
                     messageBox.className = "result-box result-error";
                     const appointmentErrorMessage = {
                         doctor_daily_capacity_reached: "This doctor has reached the maximum patient limit for the selected date.",
-                        invalid_slot: "Selected slot is not available. Please choose another date or doctor.",
-                        invalid_token: "Selected token is not available. Please try again.",
+                        invalid_slot: "Doctor is not available on this date. Please select another date.",
+                        invalid_token: "Doctor is not available on this date. No appointment slots have been set up for this date.",
                         entity_not_found: "Patient or doctor not found. Please try again.",
                         validation_failed: "Please fill all required fields correctly.",
                     }[appointmentData.error] || (appointmentData.error || "Appointment booking failed.");
@@ -372,8 +414,27 @@
         });
 
         async function createOrGetBillingLedger(formData, resultBox) {
+            const opdNumber = formData.get("opd_number") || "";
+            if (!opdNumber) {
+                resultBox.className = "result-box result-error";
+                resultBox.textContent = "Patient OPD Number is required.";
+                return null;
+            }
+
+            // Reuse latest OPD ledger/invoice to keep billing on the same invoice context.
+            const existingLedgerRes = await fetch(`/api/billing/ledger/by-opd/?opd_number=${encodeURIComponent(opdNumber)}`, {
+                credentials: "same-origin",
+            });
+            const existingLedgerData = await existingLedgerRes.json().catch(() => ({}));
+            if (existingLedgerRes.ok && existingLedgerData.data && existingLedgerData.data.ledger_id) {
+                return {
+                    ledgerId: existingLedgerData.data.ledger_id,
+                    ledgerData: existingLedgerData,
+                };
+            }
+
             const ledgerPayload = new URLSearchParams({
-                opd_number: formData.get("opd_number") || "",
+                opd_number: opdNumber,
                 appointment_id: formData.get("appointment_id") || "",
             });
 
@@ -546,10 +607,17 @@
             fetchNextToken();
         });
 
-        document.querySelector('#patientRegisterForm select[name="doctor_id"]').addEventListener("change", fetchNextToken);
+        document.querySelector('#patientRegisterForm select[name="doctor_id"]').addEventListener("change", () => {
+            autoPopulateOpdFee();
+            fetchNextToken();
+        });
 
-        setDefaultSlotDate();
-        loadDoctors();
+        (async () => {
+            setDefaultSlotDate();
+            await loadDoctors().catch((error) => {
+                console.error("Failed to load doctors on page load:", error);
+            });
+        })();
     </script>
 </div>
 {% endblock %}

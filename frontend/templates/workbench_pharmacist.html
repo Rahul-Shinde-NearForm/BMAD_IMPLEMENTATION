@@ -7,6 +7,31 @@
 <div class="container">
     <p>Pharmacy console for patient lookup and prescription retrieval/print.</p>
 
+    <style>
+        .patient-result-item {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.6rem 0.5rem;
+            border-bottom: 1px solid #e3edf8;
+            font-size: 0.95rem;
+            color: #1a2b4a;
+            font-weight: 500;
+        }
+
+        .patient-result-item:last-child {
+            border-bottom: none;
+        }
+
+        .patient-result-item button {
+            margin-left: auto;
+            padding: 0.32rem 0.9rem;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            min-height: 30px;
+        }
+    </style>
+
     <section class="toolbar">
         <button class="btn-link" onclick="window.location.href = document.referrer || '/'">&#8592; Back</button>
     </section>
@@ -16,14 +41,27 @@
         <form id="pharmaSearchForm" class="form-grid">
             <label>Name <input type="text" name="name" /></label>
             <label>Mobile <input type="text" name="phone" /></label>
+            <label>Patient OPD Number <input type="text" name="opd_number" placeholder="OPDP-000001" /></label>
             <label>DOB <input type="date" name="dob" /></label>
             <div><button type="submit">Search</button></div>
         </form>
-        <pre id="pharmaSearchResult" class="result-box"></pre>
+        <div id="pharmaSearchResult" class="result-box"></div>
     </section>
 
     <section>
-        <h2>2. Prescription and Orders by Consultation ID</h2>
+        <h2>2. Prescription History by Patient OPD</h2>
+        <form id="pharmaRxHistoryForm" class="form-grid" style="max-width: 640px;">
+            <label>Patient OPD Number <input type="text" name="opd_number" id="pharmaHistoryOpdNumber"
+                    placeholder="OPDP-000001" required /></label>
+            <label>Date From <input type="date" name="date_from" id="pharmaHistoryDateFrom" /></label>
+            <label>Date To <input type="date" name="date_to" id="pharmaHistoryDateTo" /></label>
+            <div><button type="submit">Fetch Prescription History</button></div>
+        </form>
+        <div id="pharmaRxHistoryResult" class="result-box"></div>
+    </section>
+
+    <section>
+        <h2>3. Prescription and Orders by Consultation ID</h2>
         <form id="prescriptionGetForm" class="form-inline">
             <label>Consultation ID <input type="number" name="consultation_id" min="1" required /></label>
             <button type="submit">Get Prescription</button>
@@ -41,10 +79,149 @@
             document.getElementById(targetId).textContent = text;
         }
 
-        document.getElementById("pharmaSearchForm").addEventListener("submit", (e) => {
+        function escapeHtml(text) {
+            if (text === null || text === undefined) return "-";
+            return String(text)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/\"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        async function loadPrescriptionHistoryByOpd(opdNumber, dateFrom = "", dateTo = "") {
+            const resultEl = document.getElementById("pharmaRxHistoryResult");
+            if (!opdNumber) {
+                resultEl.className = "result-box result-error";
+                resultEl.textContent = "Patient OPD Number is required.";
+                return;
+            }
+
+            resultEl.className = "result-box";
+            resultEl.textContent = "Loading prescription history...";
+
+            const params = new URLSearchParams({ opd_number: opdNumber });
+            if (dateFrom) {
+                params.set("date_from", dateFrom);
+            }
+            if (dateTo) {
+                params.set("date_to", dateTo);
+            }
+            const res = await fetch(`/api/prescriptions/history/?${params.toString()}`, {
+                credentials: "same-origin",
+            });
+            const data = await res.json().catch(() => ({}));
+
+            if (!res.ok) {
+                resultEl.className = "result-box result-error";
+                resultEl.textContent = data.error || "Unable to fetch prescription history.";
+                return;
+            }
+
+            const items = data.items || [];
+            if (!items.length) {
+                resultEl.className = "result-box result-success";
+                resultEl.textContent = "No prescription history found for this OPD number.";
+                return;
+            }
+
+            let html = "<table style='width:100%; border-collapse:collapse; font-size:0.92rem;'>";
+            html += "<thead><tr style='background:#dce8ff; font-weight:600;'>";
+            html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Issued At</th>";
+            html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Rx No.</th>";
+            html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Patient</th>";
+            html += "<th style='border:1px solid #c6d7fa; padding:8px;'>OPD No.</th>";
+            html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Mobile</th>";
+            html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Doctor</th>";
+            html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Diagnosis</th>";
+            html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Items</th>";
+            html += "<th style='border:1px solid #c6d7fa; padding:8px;'>Action</th>";
+            html += "</tr></thead><tbody>";
+
+            items.forEach((item) => {
+                html += "<tr>";
+                html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.issued_at)}</td>`;
+                html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.rx_number)}</td>`;
+                html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.patient_name)}</td>`;
+                html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.opd_number || "-")}</td>`;
+                html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.mobile || "-")}</td>`;
+                html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.doctor_name)}</td>`;
+                html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.diagnosis || "-")}</td>`;
+                html += `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.item_count)}</td>`;
+                html += "<td style='border:1px solid #c6d7fa; padding:8px; white-space:nowrap;'>" +
+                    `<a class='btn-link' style='padding:4px 8px; font-size:0.82rem;' target='_blank' href='/consultations/${item.consultation_id}/prescription/print/'>View</a>` +
+                    `<a class='btn-link' style='padding:4px 8px; font-size:0.82rem; margin-left:6px;' target='_blank' href='/consultations/${item.consultation_id}/prescription/print/?print=1'>Print</a>` +
+                    "</td>";
+                html += "</tr>";
+            });
+
+            html += "</tbody></table>";
+            resultEl.className = "result-box result-success";
+            resultEl.innerHTML = html;
+        }
+
+        function renderPharmaPatientSearchResults(items) {
+            const container = document.getElementById("pharmaSearchResult");
+            if (!items.length) {
+                container.className = "result-box result-success";
+                container.textContent = "No patients found.";
+                return;
+            }
+
+            container.className = "result-box result-success";
+            container.innerHTML = items.map((patient) => `
+                <div class="patient-result-item">
+                    <strong>${escapeHtml(patient.full_name)}</strong> | Mobile: ${escapeHtml(patient.phone)} | Patient OPD: ${escapeHtml(patient.opd_number || "-")}
+                    <button type="button" class="pharma-patient-select" data-opd-number="${escapeHtml(patient.opd_number || "")}">Select</button>
+                    <button type="button" class="pharma-patient-history" data-opd-number="${escapeHtml(patient.opd_number || "")}">Prescription History</button>
+                </div>
+            `).join("");
+        }
+
+        document.getElementById("pharmaSearchForm").addEventListener("submit", async (e) => {
             e.preventDefault();
             const params = new URLSearchParams(new FormData(e.target));
-            doGet(`/api/patients/search/?${params.toString()}`, "pharmaSearchResult");
+            const resultEl = document.getElementById("pharmaSearchResult");
+            resultEl.className = "result-box";
+            resultEl.textContent = "Searching patients...";
+
+            const res = await fetch(`/api/patients/search/?${params.toString()}`, { credentials: "same-origin" });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                resultEl.className = "result-box result-error";
+                resultEl.textContent = data.error || "Unable to search patients.";
+                return;
+            }
+            renderPharmaPatientSearchResults(data.items || []);
+        });
+
+        document.getElementById("pharmaSearchResult").addEventListener("click", async (e) => {
+            const selectBtn = e.target.closest(".pharma-patient-select");
+            const historyBtn = e.target.closest(".pharma-patient-history");
+            if (!selectBtn && !historyBtn) {
+                return;
+            }
+
+            const opdNumber = (selectBtn || historyBtn).getAttribute("data-opd-number") || "";
+            if (!opdNumber) {
+                return;
+            }
+
+            document.getElementById("pharmaHistoryOpdNumber").value = opdNumber;
+
+            if (historyBtn) {
+                const dateFrom = (document.getElementById("pharmaHistoryDateFrom").value || "").trim();
+                const dateTo = (document.getElementById("pharmaHistoryDateTo").value || "").trim();
+                await loadPrescriptionHistoryByOpd(opdNumber, dateFrom, dateTo);
+            }
+        });
+
+        document.getElementById("pharmaRxHistoryForm").addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const opdNumber = (new FormData(e.target).get("opd_number") || "").toString().trim();
+            const dateFrom = (new FormData(e.target).get("date_from") || "").toString().trim();
+            const dateTo = (new FormData(e.target).get("date_to") || "").toString().trim();
+            await loadPrescriptionHistoryByOpd(opdNumber, dateFrom, dateTo);
         });
 
         document.getElementById("prescriptionGetForm").addEventListener("submit", (e) => {

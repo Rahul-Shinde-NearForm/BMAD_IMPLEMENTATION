@@ -30,6 +30,22 @@ class Patient(models.Model):
 	def __str__(self):
 		return f"{self.first_name} {self.last_name} ({self.phone})"
 
+	@property
+	def salutation(self):
+		if self.gender == "M":
+			return "Mr"
+		if self.gender == "F":
+			return "Miss"
+		return ""
+
+	@property
+	def titled_full_name(self):
+		name = f"{self.first_name} {self.last_name}".strip()
+		salutation = self.salutation
+		if salutation:
+			return f"{salutation} {name}".strip()
+		return name
+
 	def save(self, *args, **kwargs):
 		new_record = self.pk is None
 		super().save(*args, **kwargs)
@@ -64,6 +80,8 @@ class Doctor(models.Model):
 	reg_number = models.CharField(max_length=100, blank=True, default="")
 	qualification = models.CharField(max_length=200, blank=True, default="")
 	daily_patient_capacity = models.PositiveIntegerField(default=50)
+	opd_new_patient_fee = models.DecimalField(max_digits=10, decimal_places=2, default=200.00)
+	opd_existing_patient_fee = models.DecimalField(max_digits=10, decimal_places=2, default=100.00)
 	created_at = models.DateTimeField(auto_now_add=True)
 
 	class Meta:
@@ -144,6 +162,7 @@ class Appointment(models.Model):
 	VISIT_TYPE_CHOICES = [
 		("NEW", "New"),
 		("FOLLOW_UP", "Follow Up"),
+		("FOLLOW_UP_RCT", "Follow Up (RCT)"),
 	]
 
 	CHANNEL_CHOICES = [
@@ -161,6 +180,9 @@ class Appointment(models.Model):
 	channel = models.CharField(max_length=20, choices=CHANNEL_CHOICES, default="WALK_IN")
 	opd_number = models.CharField(max_length=30, unique=True, null=True, blank=True)
 	status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="BOOKED")
+	is_emergency = models.BooleanField(default=False)
+	marked_emergency_at = models.DateTimeField(null=True, blank=True)
+	marked_emergency_by = models.ForeignKey("auth.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="emergency_appointments_marked")
 	created_at = models.DateTimeField(auto_now_add=True)
 	updated_at = models.DateTimeField(auto_now=True)
 
@@ -266,6 +288,9 @@ class Prescription(models.Model):
 	doctor_reg_number = models.CharField(max_length=100, blank=True, default="")
 	clinic_name = models.CharField(max_length=255, blank=True, default="")
 	clinic_address = models.TextField(blank=True, default="")
+	clinic_logo_url = models.CharField(max_length=500, blank=True, default="")
+	clinic_registration_number = models.CharField(max_length=100, blank=True, default="")
+	clinic_registration_authority = models.CharField(max_length=255, blank=True, default="")
 	# Rx items - Indian format fields enforced at service layer
 	items = models.JSONField(default=list)
 	# Patient-level context at time of issue
@@ -315,6 +340,8 @@ class QueueItem(models.Model):
 	STATUS_CHOICES = [
 		("WAITING", "Waiting"),
 		("CALLED", "Called"),
+		("PAUSED", "Paused"),
+		("RESUMED", "Resumed"),
 		("SKIPPED", "Skipped"),
 		("COMPLETED", "Completed"),
 		("NO_SHOW", "No Show"),
@@ -326,6 +353,9 @@ class QueueItem(models.Model):
 	token_number = models.PositiveIntegerField()
 	status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="WAITING")
 	called_at = models.DateTimeField(null=True, blank=True)
+	paused_at = models.DateTimeField(null=True, blank=True)
+	paused_by = models.ForeignKey(Doctor, null=True, blank=True, on_delete=models.SET_NULL, related_name="paused_consultations")
+	resume_order_position = models.PositiveIntegerField(default=0)
 	created_at = models.DateTimeField(auto_now_add=True)
 	updated_at = models.DateTimeField(auto_now=True)
 
@@ -401,7 +431,7 @@ class BillingLedger(models.Model):
 		("NO", "No"),
 	]
 
-	opd_number = models.CharField(max_length=30, unique=True)
+	opd_number = models.CharField(max_length=30)
 	appointment = models.ForeignKey(Appointment, on_delete=models.SET_NULL, null=True, blank=True, related_name="billing_ledgers")
 	patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name="billing_ledgers")
 	doctor = models.ForeignKey(Doctor, on_delete=models.CASCADE, related_name="billing_ledgers")
@@ -420,6 +450,7 @@ class BillingLedger(models.Model):
 	class Meta:
 		ordering = ["-created_at"]
 		indexes = [
+			models.Index(fields=["opd_number"], name="core_billin_opd_num_cdce7a_idx"),
 			models.Index(fields=["status"]),
 		]
 
@@ -428,7 +459,13 @@ class BillingLineItem(models.Model):
 	LINE_TYPE_CHOICES = [
 		("OPD_NEW_FEE", "OPD New Fee"),
 		("OPD_REPEAT_FEE", "OPD Repeat Fee"),
+		("LAB", "Lab / Pathology"),
+		("RADIOLOGY", "Radiology / Imaging"),
+		("PHARMACY", "Pharmacy / Medicine"),
+		("PROCEDURE", "Procedure Charges"),
+		("MISC", "Miscellaneous"),
 		("MANUAL", "Manual"),
+		("RCT", "RCT"),
 	]
 
 	ledger = models.ForeignKey(BillingLedger, on_delete=models.CASCADE, related_name="line_items")
@@ -438,6 +475,11 @@ class BillingLineItem(models.Model):
 	source_order_id = models.CharField(max_length=50, blank=True, default="")
 	created_by = models.CharField(max_length=150)
 	created_at = models.DateTimeField(auto_now_add=True)
+	# Multi-sitting RCT recovery fields
+	total_case_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, default=None)
+	recovery_stage_percent = models.PositiveSmallIntegerField(null=True, blank=True, default=None)
+	sitting_number = models.PositiveSmallIntegerField(null=True, blank=True, default=None)
+	total_sittings = models.PositiveSmallIntegerField(null=True, blank=True, default=None)
 
 	class Meta:
 		ordering = ["created_at"]
@@ -447,12 +489,29 @@ class BillingLineItem(models.Model):
 
 
 class BillingInvoice(models.Model):
+	PAYMENT_STATUS_CHOICES = [
+		("PENDING", "Pending"),
+		("DONE", "Done"),
+	]
+	PAYMENT_METHOD_CHOICES = [
+		("", "Unknown"),
+		("UPI", "UPI"),
+		("CASH", "Cash"),
+		("CARD", "Card"),
+	]
+
 	ledger = models.OneToOneField(BillingLedger, on_delete=models.CASCADE, related_name="invoice")
 	bill_number = models.CharField(max_length=30, unique=True, blank=True, default="")
 	subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 	discount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 	tax = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 	total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+	recovered_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+	recovered_percentage = models.PositiveSmallIntegerField(default=0)
+	payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default="PENDING")
+	payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, blank=True, default="")
+	upi_txn_ref = models.CharField(max_length=100, blank=True, default="")
+	paid_at = models.DateTimeField(null=True, blank=True)
 	created_by = models.CharField(max_length=150)
 	created_at = models.DateTimeField(auto_now_add=True)
 
@@ -557,6 +616,33 @@ class IncidentRecord(models.Model):
 		ordering = ["-created_at"]
 
 
+class DoctorDayRescheduleRequest(models.Model):
+	STATUS_CHOICES = [
+		("PENDING_RECEPTION", "Pending Reception Decision"),
+		("EXECUTED_AUTO", "Executed Automatically"),
+		("EXECUTED_EXCEED", "Executed With Capacity Exceeded"),
+		("EXECUTED_CASCADE", "Executed With Cascade"),
+	]
+
+	doctor = models.ForeignKey(Doctor, on_delete=models.CASCADE, related_name="day_reschedule_requests")
+	source_date = models.DateField()
+	target_date = models.DateField()
+	reason = models.CharField(max_length=255, blank=True, default="")
+	total_appointments = models.PositiveIntegerField(default=0)
+	target_capacity = models.PositiveIntegerField(default=0)
+	target_existing = models.PositiveIntegerField(default=0)
+	overflow_count = models.PositiveIntegerField(default=0)
+	status = models.CharField(max_length=40, choices=STATUS_CHOICES, default="PENDING_RECEPTION")
+	requested_by = models.CharField(max_length=150)
+	decided_by = models.CharField(max_length=150, blank=True, default="")
+	details = models.JSONField(default=dict)
+	created_at = models.DateTimeField(auto_now_add=True)
+	decided_at = models.DateTimeField(null=True, blank=True)
+
+	class Meta:
+		ordering = ["-created_at"]
+
+
 class UserProfile(models.Model):
 	user = models.OneToOneField("auth.User", on_delete=models.CASCADE, related_name="profile")
 	phone = models.CharField(max_length=20, blank=True, default="")
@@ -575,6 +661,12 @@ class UserProfile(models.Model):
 class ClinicSettings(models.Model):
 	clinic_name = models.CharField(max_length=255, default="OPD Clinic")
 	clinic_address = models.TextField(blank=True, default="")
+	clinic_phone = models.CharField(max_length=20, blank=True, default="")
+	clinic_mob = models.CharField(max_length=20, blank=True, default="")
+	upi_id = models.CharField(max_length=100, blank=True, default="")
+	logo = models.ImageField(upload_to="clinic_logos/", null=True, blank=True)
+	registration_number = models.CharField(max_length=100, blank=True, default="")
+	registration_authority = models.CharField(max_length=255, blank=True, default="")
 	updated_at = models.DateTimeField(auto_now=True)
 
 	@classmethod
@@ -584,6 +676,11 @@ class ClinicSettings(models.Model):
 			defaults={
 				"clinic_name": "OPD Clinic",
 				"clinic_address": "",
+				"clinic_phone": "",
+				"clinic_mob": "",
+				"upi_id": "",
+				"registration_number": "",
+				"registration_authority": "",
 			},
 		)
 		return obj
@@ -594,3 +691,34 @@ class ClinicSettings(models.Model):
 
 	def __str__(self):
 		return self.clinic_name
+
+
+class Medicine(models.Model):
+	"""Lookup table for medicine autocomplete in doctor consultation."""
+
+	CATEGORY_CHOICES = [
+		("analgesic", "Analgesic / Pain Relief"),
+		("antibiotic", "Antibiotic"),
+		("antifungal", "Antifungal"),
+		("antiseptic", "Antiseptic / Mouthwash"),
+		("anti_inflammatory", "Anti-inflammatory"),
+		("antacid", "Antacid / GI"),
+		("antihistamine", "Antihistamine"),
+		("antihypertensive", "Antihypertensive"),
+		("antidiabetic", "Antidiabetic"),
+		("vitamin", "Vitamin / Supplement"),
+		("dental", "Dental Specific"),
+		("other", "Other"),
+	]
+
+	name = models.CharField(max_length=200, unique=True)
+	category = models.CharField(max_length=40, choices=CATEGORY_CHOICES, default="other")
+	default_strength = models.CharField(max_length=50, blank=True, default="")
+	is_active = models.BooleanField(default=True)
+	created_at = models.DateTimeField(auto_now_add=True)
+
+	class Meta:
+		ordering = ["name"]
+
+	def __str__(self):
+		return self.name

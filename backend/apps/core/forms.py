@@ -150,7 +150,7 @@ class AppointmentBookForm(forms.Form):
     slot_date = forms.DateField(input_formats=["%Y-%m-%d"])
     start_time = forms.TimeField(input_formats=["%H:%M", "%H:%M:%S"], required=False)
     token = forms.IntegerField(min_value=1, required=False)
-    visit_type = forms.ChoiceField(choices=[("NEW", "New"), ("FOLLOW_UP", "Follow Up")])
+    visit_type = forms.ChoiceField(choices=[("NEW", "New"), ("FOLLOW_UP", "Follow Up"), ("FOLLOW_UP_RCT", "Follow Up (RCT)")])
     channel = forms.ChoiceField(choices=[("WALK_IN", "Walk-In"), ("PHONE", "Mobile")])
 
     def clean(self):
@@ -160,12 +160,19 @@ class AppointmentBookForm(forms.Form):
         return cleaned
 
 
+class DoctorOpdFeeForm(forms.Form):
+    doctor_name = forms.CharField(max_length=150)
+    opd_new_patient_fee = forms.DecimalField(min_value=0, decimal_places=2)
+    opd_existing_patient_fee = forms.DecimalField(min_value=0, decimal_places=2)
+
+
 class AppointmentRescheduleForm(forms.Form):
     slot_date = forms.DateField(input_formats=["%Y-%m-%d"])
     start_time = forms.TimeField(input_formats=["%H:%M", "%H:%M:%S"], required=False)
     end_time = forms.TimeField(input_formats=["%H:%M", "%H:%M:%S"], required=False)
     token = forms.IntegerField(min_value=1, required=False)
     reason = forms.CharField(max_length=255)
+    is_emergency = forms.BooleanField(required=False)
 
     def clean(self):
         cleaned = super().clean()
@@ -178,6 +185,16 @@ class AppointmentRescheduleForm(forms.Form):
 
 class AppointmentCancelForm(forms.Form):
     reason = forms.CharField(max_length=255)
+
+
+class DoctorEmergencyDayRescheduleForm(forms.Form):
+    reason = forms.CharField(max_length=255, required=False)
+    source_date = forms.DateField(input_formats=["%Y-%m-%d"], required=False)
+    doctor_id = forms.IntegerField(min_value=1, required=False)
+
+
+class ReceptionEmergencyRescheduleDecisionForm(forms.Form):
+    action = forms.ChoiceField(choices=[("EXCEED", "EXCEED"), ("CASCADE", "CASCADE")])
 
 
 class UserCreateForm(forms.Form):
@@ -215,6 +232,41 @@ class QueueBoardForm(forms.Form):
 class QueueCallNextForm(forms.Form):
     doctor_id = forms.IntegerField(min_value=1)
     slot_date = forms.DateField(input_formats=["%Y-%m-%d"])
+
+
+class PauseCurrentConsultationForm(forms.Form):
+    doctor_id = forms.IntegerField(min_value=1, required=False)
+
+
+class AddEmergencyPatientForm(forms.Form):
+    doctor_id = forms.IntegerField(min_value=1)
+    patient_id = forms.IntegerField(min_value=1, required=False)
+    first_name = forms.CharField(max_length=100, required=False)
+    last_name = forms.CharField(max_length=100, required=False)
+    phone = forms.CharField(max_length=20, required=False)
+    visit_type = forms.ChoiceField(choices=[("NEW", "New"), ("FOLLOW_UP", "Follow Up"), ("FOLLOW_UP_RCT", "Follow Up (RCT)")], required=False)
+
+    def clean(self):
+        cleaned = super().clean()
+        patient_id = cleaned.get("patient_id")
+        first_name = (cleaned.get("first_name") or "").strip()
+        last_name = (cleaned.get("last_name") or "").strip()
+        phone = (cleaned.get("phone") or "").strip()
+
+        if patient_id:
+            return cleaned
+
+        if not first_name:
+            self.add_error("first_name", "first_name is required when patient_id is not provided")
+        if not last_name:
+            self.add_error("last_name", "last_name is required when patient_id is not provided")
+        if not phone:
+            self.add_error("phone", "phone is required when patient_id is not provided")
+
+        cleaned["first_name"] = first_name
+        cleaned["last_name"] = last_name
+        cleaned["phone"] = phone
+        return cleaned
 
 
 class ConsultationDraftForm(forms.Form):
