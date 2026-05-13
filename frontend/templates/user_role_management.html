@@ -120,6 +120,12 @@
                 <label>Clinic Address
                     <textarea name="clinic_address" rows="3">{{ clinic_address }}</textarea>
                 </label>
+                <label>Clinic Type
+                    <select name="clinic_type" required>
+                        <option value="GENERAL" {% if clinic_type == "GENERAL" %}selected{% endif %}>General</option>
+                        <option value="DENTIST" {% if clinic_type == "DENTIST" %}selected{% endif %}>Dentist</option>
+                    </select>
+                </label>
                 <label>Clinic Phone (Landline)
                     <input type="text" name="clinic_phone" value="{{ clinic_phone }}"
                         placeholder="e.g., +91-20-1234-5678" />

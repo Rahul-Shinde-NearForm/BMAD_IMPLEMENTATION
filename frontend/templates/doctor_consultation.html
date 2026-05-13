@@ -23,6 +23,31 @@
         .emergency-blink {
             animation: emergency-blink 0.6s infinite;
         }
+
+        .summary-card {
+            background: #f8fbff;
+            border: 1px solid #cfe0ff;
+            border-radius: 8px;
+            padding: 0.75rem;
+            display: grid;
+            gap: 0.3rem;
+        }
+
+        .summary-card-title {
+            font-weight: 700;
+            color: #173b7a;
+            margin-bottom: 0.1rem;
+        }
+
+        .summary-card-row {
+            font-size: 0.93rem;
+            color: #1f2937;
+            line-height: 1.35;
+        }
+
+        .summary-card-content {
+            white-space: pre-line;
+        }
     </style>
 
     <section class="toolbar">
@@ -70,7 +95,7 @@
                     Changes</button>
             </div>
         </form>
-        <pre id="consultationDraftResult" class="result-box"></pre>
+        <div id="consultationDraftResult" class="result-box"></div>
     </section>
 
     <section id="previousHistoryContainer" style="margin-top: 1.5rem; display:none;">
@@ -87,7 +112,7 @@
         <h2>Doctor Billing Add-ons</h2>
         <div id="doctorBillingSummary" class="result-box">Loading billing details...</div>
         <div style="margin-top:0.75rem; max-width:900px; display:grid; gap:0.75rem;">
-            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr 1fr auto; gap:0.5rem; align-items:end;">
+            <div style="display:grid; grid-template-columns: 1fr 2fr 1fr auto; gap:0.5rem; align-items:end;">
                 <label>Charge Type
                     <select id="doctorBillingTypeInput">
                         <option value="OPD_NEW_FEE">OPD Fee (New)</option>
@@ -98,45 +123,45 @@
                     </select>
                 </label>
                 <label id="doctorBillingDescriptionLabel">Description
-                    <input type="text" id="doctorBillingDescriptionInput" placeholder="e.g. RCT - Sitting 1 of 4" />
-                </label>
-                <label id="doctorBillingTotalCaseAmountLabel">Total Case Fee (Rs)
-                    <input type="number" id="doctorBillingTotalCaseAmountInput" min="0.01" step="0.01"
-                        placeholder="e.g. 5000 (optional)" />
-                </label>
-                <label id="doctorBillingRecoveryStageLabel">Recovery % (RCT)
-                    <select id="doctorBillingRecoveryStageInput">
-                        <option value="">None</option>
-                        <option value="25">25%</option>
-                        <option value="50">50%</option>
-                        <option value="75">75%</option>
-                        <option value="100">100%</option>
-                    </select>
-                </label>
-                <button type="button" id="doctorBillingAddBtn">Add Charge</button>
-            </div>
-            <div id="doctorBillingRctRow2"
-                style="display:grid; grid-template-columns: 1fr 1fr 1fr 1fr 1fr; gap:0.5rem; margin-top:0.5rem;">
-                <label id="doctorBillingSittingNumberLabel">Sitting Number (optional)
-                    <input type="number" id="doctorBillingSittingNumberInput" min="1" max="10" placeholder="e.g. 1" />
-                </label>
-                <label id="doctorBillingTotalSittingsLabel">Total Sittings (optional)
-                    <input type="number" id="doctorBillingTotalSittingsInput" min="1" max="10" placeholder="e.g. 4" />
-                </label>
-                <label id="doctorBillingCalculatedAmountLabel">Calculated Amount (Rs)
-                    <input type="text" id="doctorBillingCalculatedAmountInput" readonly placeholder="Auto-calculated"
-                        style="background:#f3f4f6;" />
-                </label>
-                <label id="doctorBillingRecoveredTillDateLabel">Remaining Case Fee (Rs)
-                    <input type="text" id="doctorBillingRecoveredTillDateInput" readonly placeholder="Auto-calculated"
-                        style="background:#f3f4f6;" />
+                    <input type="text" id="doctorBillingDescriptionInput" placeholder="e.g. RCT sitting 1" />
                 </label>
                 <label id="doctorBillingAmountLabel">Charge Amount (Rs)
                     <input type="number" id="doctorBillingAmountInput" min="0.01" step="0.01"
                         placeholder="Enter amount" />
                 </label>
+                <button type="button" id="doctorBillingAddBtn">Add Charge</button>
             </div>
-            <pre id="doctorBillingResult" class="result-box"></pre>
+            <!-- RCT-only row: shown only when Charge Type = RCT -->
+            <div id="doctorBillingRctRow2"
+                style="display:none; grid-template-columns: 1fr 1fr 1fr; gap:0.5rem; margin-top:0.25rem; padding:0.75rem; background:#f0f9ff; border:1px solid #bae6fd; border-radius:6px;">
+                <label id="doctorBillingTotalCaseAmountLabel">Total RCT Charges (Rs)
+                    <input type="number" id="doctorBillingTotalCaseAmountInput" min="0.01" step="0.01"
+                        placeholder="Full course fee e.g. 5000" />
+                    <small style="color:#555;">Doctor sets this on the first RCT visit</small>
+                </label>
+                <label id="doctorBillingRecoveredTillDateLabel">Total RCT Charges Recovered (Rs)
+                    <input type="text" id="doctorBillingRecoveredTillDateInput" readonly placeholder="Auto-calculated"
+                        style="background:#f3f4f6;" />
+                    <small style="color:#555;">Sum paid in all previous RCT visits</small>
+                </label>
+                <label id="doctorBillingRemainingLabel">Remaining RCT Charges to be Paid (Rs)
+                    <input type="text" id="doctorBillingRemainingInput" readonly placeholder="Auto-calculated"
+                        style="background:#ecfdf5; font-weight:600;" />
+                    <small style="color:#555;">Auto-fills the Charge Amount above</small>
+                </label>
+            </div>
+            <div id="doctorBillingResult" class="result-box"></div>
+            <div id="doctorGenerateInvoiceRow" style="display:none; margin-top:0.75rem;">
+                <div
+                    style="padding:0.6rem 1rem; background:#fef3c7; border:1px solid #f59e0b; border-radius:6px; margin-bottom:0.5rem; font-size:0.9rem; color:#92400e;">
+                    <strong>FOLLOW-UP RCT Visit:</strong> Receptionist billing is disabled. Add your charges above, then
+                    generate the invoice below.
+                </div>
+                <button type="button" id="doctorGenerateInvoiceBtn"
+                    style="background:#15803d; color:#fff; border:none; border-radius:6px; padding:0.5rem 1.25rem; font-size:0.95rem; cursor:pointer;">&#x1F4CB;
+                    Generate Invoice</button>
+                <div id="doctorGenerateInvoiceResult" class="result-box" style="margin-top:0.6rem; display:none;"></div>
+            </div>
         </div>
     </section>
 
@@ -217,7 +242,7 @@
                 <option value="ECG"></option>
             </datalist>
         </div>
-        <pre id="prescriptionResult" class="result-box"></pre>
+        <div id="prescriptionResult" class="result-box"></div>
     </section>
 </div>
 
@@ -228,12 +253,15 @@
     }
 
     const appointmentId = new URLSearchParams(window.location.search).get("appointment_id");
+    const CLINIC_TYPE = "{{ clinic_type|default:'GENERAL'|upper|escapejs }}";
+    const IS_DENTIST_CLINIC = CLINIC_TYPE === "DENTIST";
     let currentDoctorId = null;
     let currentSlotDate = null;
     let currentOpdNumber = null;
     let consultationId = null;
     let patientId = null;
     let billingLedgerId = null;
+    let currentVisitType = null;
     let consultationBaseDate = new Date();
     let consultationStatus = null;
     let consultationEditMode = false;
@@ -256,8 +284,8 @@
         weight_kg: "",
     };
     let currentRctRecoveryMeta = {
-        totalCaseFee: 0,
-        totalPaidAmount: 0,
+        totalCaseFee: 0,      // full course fee entered by doctor
+        totalRecovered: 0,    // sum of RCT amounts paid in previous finalized visits
     };
     const DEFAULT_OPD_NEW_FEE = 200;
     const DEFAULT_OPD_OLD_FEE = 100;
@@ -371,6 +399,56 @@
             .replace(/>/g, "&gt;")
             .replace(/\"/g, "&quot;")
             .replace(/'/g, "&#039;");
+    }
+
+    const SUMMARY_MESSAGE_TITLES = {
+        consultationContext: "Patient Context",
+        queueStatusBanner: "Queue Status",
+        consultationDraftResult: "Consultation Summary",
+        doctorBillingResult: "Billing Summary",
+        prescriptionResult: "Prescription Summary",
+        doctorGenerateInvoiceResult: "Invoice Summary",
+    };
+
+    function renderSummaryMessageCard(title, contentHtml) {
+        return `
+            <div class="summary-card">
+                <div class="summary-card-title">${escapeHtml(title)}</div>
+                <div class="summary-card-row summary-card-content">${contentHtml}</div>
+            </div>
+        `;
+    }
+
+    function applySummaryMessageStyle(element) {
+        if (!element) return;
+        const id = element.id;
+        const title = SUMMARY_MESSAGE_TITLES[id];
+        if (!title) return;
+        const html = String(element.innerHTML || "").trim();
+        if (!html) {
+            return;
+        }
+        if (element.querySelector(".summary-card")) {
+            return;
+        }
+        element.style.display = "block";
+        element.innerHTML = renderSummaryMessageCard(title, html);
+    }
+
+    function initSummaryMessageStyling() {
+        Object.keys(SUMMARY_MESSAGE_TITLES).forEach((id) => {
+            const element = document.getElementById(id);
+            if (!element) return;
+            applySummaryMessageStyle(element);
+            const observer = new MutationObserver(() => {
+                applySummaryMessageStyle(element);
+            });
+            observer.observe(element, {
+                childList: true,
+                characterData: true,
+                subtree: true,
+            });
+        });
     }
 
     function queueStatusBadgeHtml(status, isEmergency) {
@@ -1076,6 +1154,12 @@
         if (code === "ledger_not_open") {
             return "Billing is already finalized, so charges cannot be removed now.";
         }
+        if (code === "line_items_required") {
+            return "Add at least one charge before generating the invoice.";
+        }
+        if (code === "rct_not_allowed_for_general_clinic") {
+            return "RCT charges are available only when Clinic Type is Dentist.";
+        }
         if (code.indexOf("billing_finalize_failed:") === 0) {
             return "Unable to finalize the bill on NEXT patient. Please verify billing entries and retry.";
         }
@@ -1182,43 +1266,41 @@
     }
 
     function extractRctRecoveryMetaFromLedger(ledger) {
+        // Extract total_case_amount from RCT line items in the current ledger.
+        // totalRecovered comes from the API (previous finalized visits), not the current ledger.
         const items = (ledger && Array.isArray(ledger.line_items)) ? ledger.line_items : [];
         let totalCaseFee = 0;
-        let totalPaidAmount = 0;
 
         items.forEach((item) => {
             const lineType = String(item.line_type || "").toUpperCase();
-            if (lineType !== "RCT") {
-                return;
-            }
-
+            if (lineType !== "RCT") return;
             const totalCaseRaw = Number(item.total_case_amount || 0);
             if (Number.isFinite(totalCaseRaw) && totalCaseRaw > 0) {
                 totalCaseFee = totalCaseRaw;
-            }
-
-            const paidRaw = Number(item.amount || 0);
-            if (Number.isFinite(paidRaw) && paidRaw > 0) {
-                totalPaidAmount += paidRaw;
             }
         });
 
         return {
             totalCaseFee,
-            totalPaidAmount,
+            totalRecovered: currentRctRecoveryMeta.totalRecovered, // preserve API-loaded value
         };
     }
 
-    function updateRctRecoveredTillDateField() {
+    function updateRctFields() {
+        // Re-calculates and populates:
+        //   doctorBillingRecoveredTillDateInput  = totalRecovered (from previous visits, loaded via API)
+        //   doctorBillingRemainingInput           = totalCaseFee - totalRecovered
+        // and auto-fills the Charge Amount field with the remaining amount.
         const lineType = String(document.getElementById("doctorBillingTypeInput")?.value || "");
-        const recoveredTillDateInput = document.getElementById("doctorBillingRecoveredTillDateInput");
+        const recoveredInput = document.getElementById("doctorBillingRecoveredTillDateInput");
+        const remainingInput = document.getElementById("doctorBillingRemainingInput");
         const totalCaseInput = document.getElementById("doctorBillingTotalCaseAmountInput");
-        if (!recoveredTillDateInput || !totalCaseInput) {
-            return;
-        }
+        const amountInput = document.getElementById("doctorBillingAmountInput");
+        if (!recoveredInput || !remainingInput || !totalCaseInput) return;
 
         if (lineType !== "RCT") {
-            recoveredTillDateInput.value = "";
+            recoveredInput.value = "";
+            remainingInput.value = "";
             return;
         }
 
@@ -1226,16 +1308,28 @@
         const effectiveTotalCaseFee = Number.isFinite(enteredTotalCaseFee) && enteredTotalCaseFee > 0
             ? enteredTotalCaseFee
             : Number(currentRctRecoveryMeta.totalCaseFee || 0);
-        const totalPaidAmount = Number(currentRctRecoveryMeta.totalPaidAmount || 0);
+        const totalRecovered = Number(currentRctRecoveryMeta.totalRecovered || 0);
 
         if (!Number.isFinite(effectiveTotalCaseFee) || effectiveTotalCaseFee <= 0) {
-            recoveredTillDateInput.value = "";
+            // Show recovered even without a known total, so doctor can see previous charges
+            recoveredInput.value = totalRecovered > 0 ? formatMoney(totalRecovered) : "";
+            remainingInput.value = "";
+            // Don't auto-fill amount — doctor must enter total first
             return;
         }
 
-        const recoveredTillDate = Math.max(0, effectiveTotalCaseFee - totalPaidAmount);
-        recoveredTillDateInput.value = formatMoney(recoveredTillDate);
+        const remaining = Math.max(0, effectiveTotalCaseFee - totalRecovered);
+        recoveredInput.value = formatMoney(totalRecovered);
+        remainingInput.value = formatMoney(remaining);
+        // Auto-fill the charge amount with the remaining so the doctor doesn't have to type it
+        if (amountInput && (!amountInput.value || amountInput.dataset.autoFilled === "1")) {
+            amountInput.value = remaining.toFixed(2);
+            amountInput.dataset.autoFilled = "1";
+        }
     }
+
+    // Keep legacy alias used in a few places
+    const updateRctRecoveredTillDateField = updateRctFields;
 
     function getRemainingCaseFeeForRct() {
         const totalCaseInput = document.getElementById("doctorBillingTotalCaseAmountInput");
@@ -1243,14 +1337,15 @@
         const effectiveTotalCaseFee = Number.isFinite(enteredTotalCaseFee) && enteredTotalCaseFee > 0
             ? enteredTotalCaseFee
             : Number(currentRctRecoveryMeta.totalCaseFee || 0);
-        const totalPaidAmount = Number(currentRctRecoveryMeta.totalPaidAmount || 0);
+        const totalRecovered = Number(currentRctRecoveryMeta.totalRecovered || 0);
+        if (!Number.isFinite(effectiveTotalCaseFee) || effectiveTotalCaseFee <= 0) return 0;
+        return Math.max(0, effectiveTotalCaseFee - totalRecovered);
+    }
 
-        if (!Number.isFinite(effectiveTotalCaseFee) || effectiveTotalCaseFee <= 0) {
-            return 0;
-        }
-
-        // First RCT visit: totalPaidAmount is 0, so remaining equals total case fee.
-        return Math.max(0, effectiveTotalCaseFee - totalPaidAmount);
+    function updateGenerateInvoiceButtonVisibility() {
+        const row = document.getElementById("doctorGenerateInvoiceRow");
+        if (!row) return;
+        row.style.display = (currentVisitType === "FOLLOW_UP_RCT" && billingLedgerId) ? "block" : "none";
     }
 
     async function loadDoctorBillingLedger() {
@@ -1273,7 +1368,60 @@
             });
             const data = await res.json().catch(() => ({}));
 
-            if (!res.ok || !data.data) {
+            // For FOLLOW_UP_RCT: if no ledger, or the found ledger is FINALIZED (previous visit),
+            // or it belongs to a different appointment — create a fresh OPEN ledger for this visit.
+            const foundLedger = data.data;
+            const needsNewLedger = !res.ok || !foundLedger
+                || (currentVisitType === "FOLLOW_UP_RCT" && (
+                    foundLedger.status === "FINALIZED"
+                    || (foundLedger.appointment_id && String(foundLedger.appointment_id) !== String(appointmentId))
+                ));
+
+            if (needsNewLedger) {
+                // For FOLLOW_UP_RCT, receptionist skips billing — auto-create ledger now for doctor
+                if (currentVisitType === "FOLLOW_UP_RCT" && currentOpdNumber && appointmentId) {
+                    summaryEl.className = "result-box";
+                    summaryEl.textContent = "FOLLOW_UP_RCT: Creating billing ledger for doctor charges...";
+                    try {
+                        const createRes = await fetch("/api/billing/ledger/by-opd/create/", {
+                            method: "POST",
+                            headers: { "X-CSRFToken": getCSRFToken(), "Content-Type": "application/x-www-form-urlencoded" },
+                            body: new URLSearchParams({ opd_number: currentOpdNumber, appointment_id: appointmentId }),
+                            credentials: "same-origin",
+                        });
+                        const createData = await createRes.json().catch(() => ({}));
+                        if (createRes.ok && createData.data) {
+                            billingLedgerId = createData.data.ledger_id;
+                            currentRctRecoveryMeta = extractRctRecoveryMetaFromLedger(createData.data);
+                            renderDoctorBillingLedger(createData.data);
+                            // Default charge type to RCT so the panel is immediately visible
+                            const typeSelect = document.getElementById("doctorBillingTypeInput");
+                            if (typeSelect && IS_DENTIST_CLINIC) typeSelect.value = "RCT";
+                            updateOpdFeeOptionAvailability(createData.data);
+                            updateGenerateInvoiceButtonVisibility();
+                            // Load previous visit RCT totals to auto-fill the three RCT fields
+                            await loadRctCaseAmount();
+                            if (resultEl) {
+                                resultEl.className = "result-box result-success";
+                                resultEl.textContent = "Billing ledger created. Add charges below, then click Generate Invoice.";
+                            }
+                        } else {
+                            renderDoctorBillingLedger(null);
+                            updateOpdFeeOptionAvailability(null);
+                            if (resultEl) {
+                                resultEl.className = "result-box result-error";
+                                resultEl.textContent = humanizeDoctorBillingError(createData.error || "billing_ledger_create_failed");
+                            }
+                        }
+                    } catch (createErr) {
+                        renderDoctorBillingLedger(null);
+                        if (resultEl) {
+                            resultEl.className = "result-box result-error";
+                            resultEl.textContent = createErr.message || "Unable to create billing ledger.";
+                        }
+                    }
+                    return;
+                }
                 renderDoctorBillingLedger(null);
                 updateOpdFeeOptionAvailability(null);
                 if (resultEl) {
@@ -1287,6 +1435,7 @@
             currentRctRecoveryMeta = extractRctRecoveryMetaFromLedger(data.data);
             renderDoctorBillingLedger(data.data);
             updateOpdFeeOptionAvailability(data.data);
+            updateGenerateInvoiceButtonVisibility();
             await loadRctCaseAmount(); // Auto-fill RCT total case amount if it exists
             updateRctRecoveredTillDateField();
             if (resultEl) {
@@ -1312,12 +1461,17 @@
                 credentials: "same-origin",
             });
             const data = await res.json();
-            if (res.ok && data.total_case_amount) {
-                document.getElementById("doctorBillingTotalCaseAmountInput").value = data.total_case_amount;
+            if (res.ok) {
+                if (data.total_case_amount) {
+                    document.getElementById("doctorBillingTotalCaseAmountInput").value = data.total_case_amount;
+                    currentRctRecoveryMeta.totalCaseFee = Number(data.total_case_amount);
+                }
+                // total_recovered = sum of RCT amounts from previous finalized visits
+                currentRctRecoveryMeta.totalRecovered = Number(data.total_recovered || 0);
             }
-            updateRctRecoveredTillDateField();
+            updateRctFields();
         } catch (error) {
-            // Silently fail - user can manually enter the amount
+            // Silently fail - user can manually enter amounts
             console.log("Unable to fetch RCT case amount:", error);
         }
     }
@@ -1353,6 +1507,7 @@
         patientId = data.patient && data.patient.patient_id ? data.patient.patient_id : null;
         currentDoctorId = data.appointment && data.appointment.doctor_id ? data.appointment.doctor_id : null;
         currentSlotDate = data.appointment && data.appointment.slot_date ? data.appointment.slot_date : null;
+        currentVisitType = (data.appointment && data.appointment.visit_type) ? String(data.appointment.visit_type).toUpperCase() : null;
         // Billing is keyed by patient OPD number; prefer it over appointment OPD.
         currentOpdNumber = (data.patient && data.patient.opd_number)
             ? data.patient.opd_number
@@ -1716,26 +1871,15 @@
 
     // Function to calculate and update the billing amount based on RCT recovery fields
     function updateCalculatedBillingAmount() {
-        const lineType = String(document.getElementById("doctorBillingTypeInput")?.value || "");
-        const recoveryStagePercent = parseInt(document.getElementById("doctorBillingRecoveryStageInput").value || "0");
-        const calculatedAmountEl = document.getElementById("doctorBillingCalculatedAmountInput");
-        const amountInputEl = document.getElementById("doctorBillingAmountInput");
-        const remainingCaseFee = lineType === "RCT" ? getRemainingCaseFeeForRct() : 0;
-
-        if (lineType === "RCT" && remainingCaseFee > 0 && recoveryStagePercent > 0) {
-            const calculatedAmount = (remainingCaseFee * recoveryStagePercent) / 100;
-            calculatedAmountEl.value = calculatedAmount.toFixed(2);
-            // Keep amount aligned with computed staged amount unless user overrides.
-            amountInputEl.value = calculatedAmount.toFixed(2);
-        } else {
-            calculatedAmountEl.value = "";
-        }
-
-        updateRctRecoveredTillDateField();
+        // Kept as alias — actual calculation now lives in updateRctFields()
+        updateRctFields();
     }
 
-    document.getElementById("doctorBillingTotalCaseAmountInput").addEventListener("input", updateCalculatedBillingAmount);
-    document.getElementById("doctorBillingRecoveryStageInput").addEventListener("change", updateCalculatedBillingAmount);
+    document.getElementById("doctorBillingTotalCaseAmountInput").addEventListener("input", () => {
+        currentRctRecoveryMeta.totalCaseFee = Number(document.getElementById("doctorBillingTotalCaseAmountInput").value || 0);
+        document.getElementById("doctorBillingAmountInput").dataset.autoFilled = "1"; // allow re-fill
+        updateRctFields();
+    });
 
     document.getElementById("doctorBillingAddBtn").addEventListener("click", async () => {
         const resultEl = document.getElementById("doctorBillingResult");
@@ -1748,17 +1892,14 @@
         const lineType = document.getElementById("doctorBillingTypeInput").value;
         const description = String(document.getElementById("doctorBillingDescriptionInput").value || "").trim();
         const totalCaseAmount = document.getElementById("doctorBillingTotalCaseAmountInput").value.trim();
-        const recoveryStagePercent = document.getElementById("doctorBillingRecoveryStageInput").value.trim();
-        const sittingNumber = document.getElementById("doctorBillingSittingNumberInput").value.trim();
-        const totalSittings = document.getElementById("doctorBillingTotalSittingsInput").value.trim();
         const enteredAmount = document.getElementById("doctorBillingAmountInput").value.trim();
 
-        let amount = parseFloat(enteredAmount || document.getElementById("doctorBillingCalculatedAmountInput").value || "0");
+        let amount = parseFloat(enteredAmount || "0");
 
         // Validate amount
         if (!Number.isFinite(amount) || amount <= 0) {
             resultEl.className = "result-box result-error";
-            resultEl.textContent = "Please enter a valid amount greater than 0 or set Total Case Fee and Recovery %.";
+            resultEl.textContent = "Please enter a valid Charge Amount greater than 0.";
             return;
         }
 
@@ -1771,18 +1912,8 @@
             amount: String(amount),
         });
 
-        // Add RCT recovery fields if provided
-        if (totalCaseAmount) {
+        if (lineType === "RCT" && totalCaseAmount) {
             body.append("total_case_amount", totalCaseAmount);
-        }
-        if (recoveryStagePercent) {
-            body.append("recovery_stage_percent", recoveryStagePercent);
-        }
-        if (sittingNumber) {
-            body.append("sitting_number", sittingNumber);
-        }
-        if (totalSittings) {
-            body.append("total_sittings", totalSittings);
         }
 
         const res = await fetch(`/api/billing/ledger/${billingLedgerId}/line-items/`, {
@@ -1801,14 +1932,49 @@
 
         document.getElementById("doctorBillingDescriptionInput").value = "";
         document.getElementById("doctorBillingTotalCaseAmountInput").value = "";
-        document.getElementById("doctorBillingRecoveryStageInput").value = "";
-        document.getElementById("doctorBillingSittingNumberInput").value = "";
-        document.getElementById("doctorBillingTotalSittingsInput").value = "";
-        document.getElementById("doctorBillingCalculatedAmountInput").value = "";
         document.getElementById("doctorBillingAmountInput").value = "";
+        delete document.getElementById("doctorBillingAmountInput").dataset.autoFilled;
         resultEl.className = "result-box result-success";
         resultEl.textContent = "Charge added successfully.";
         await loadDoctorBillingLedger();
+    });
+
+    document.getElementById("doctorGenerateInvoiceBtn").addEventListener("click", async () => {
+        const resultSpan = document.getElementById("doctorGenerateInvoiceResult");
+        const btn = document.getElementById("doctorGenerateInvoiceBtn");
+        if (!billingLedgerId) {
+            resultSpan.style.color = "#b91c1c";
+            resultSpan.textContent = "Billing ledger not available.";
+            return;
+        }
+        btn.disabled = true;
+        resultSpan.style.color = "#555";
+        resultSpan.textContent = "Generating invoice...";
+        try {
+            const res = await fetch(`/api/billing/ledger/${billingLedgerId}/finalize/`, {
+                method: "POST",
+                headers: { "X-CSRFToken": getCSRFToken(), "Content-Type": "application/x-www-form-urlencoded" },
+                body: new URLSearchParams({ tax: "0", discount: "0" }),
+                credentials: "same-origin",
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok && data.data) {
+                const invoiceId = data.data.invoice_id;
+                const billNo = data.data.bill_number || invoiceId;
+                const total = data.data.total || "0";
+                resultSpan.style.color = "#15803d";
+                resultSpan.innerHTML = `Invoice <strong>${escapeHtml(String(billNo))}</strong> created — Total: ₹${escapeHtml(String(total))}. <a href="/billing/invoice/${invoiceId}/print/" target="_blank" style="color:#1d4ed8;">View Invoice ↗</a>`;
+                btn.disabled = false;
+            } else {
+                resultSpan.style.color = "#b91c1c";
+                resultSpan.textContent = humanizeDoctorBillingError(data.error || "Unable to generate invoice. Check charges and retry.");
+                btn.disabled = false;
+            }
+        } catch (err) {
+            resultSpan.style.color = "#b91c1c";
+            resultSpan.textContent = err.message || "Network error generating invoice.";
+            btn.disabled = false;
+        }
     });
 
     document.getElementById("doctorBillingSummary").addEventListener("click", async (e) => {
@@ -1974,43 +2140,64 @@
     });
 
     // Dynamic field visibility based on Charge Type
+    function applyClinicChargeTypeOptions() {
+        const typeSelect = document.getElementById("doctorBillingTypeInput");
+        if (!typeSelect) {
+            return;
+        }
+
+        const rctOption = typeSelect.querySelector('option[value="RCT"]');
+        if (!rctOption) {
+            return;
+        }
+
+        if (IS_DENTIST_CLINIC) {
+            rctOption.hidden = false;
+            rctOption.disabled = false;
+            return;
+        }
+
+        if (typeSelect.value === "RCT") {
+            typeSelect.value = "MISC";
+        }
+        rctOption.hidden = true;
+        rctOption.disabled = true;
+    }
+
     function updateBillingFieldVisibility() {
         const selectedType = document.getElementById("doctorBillingTypeInput").value;
         const isRCT = selectedType === "RCT";
-        const rctOnlyEls = [
-            document.getElementById("doctorBillingTotalCaseAmountLabel"),
-            document.getElementById("doctorBillingRecoveryStageLabel"),
-            document.getElementById("doctorBillingSittingNumberLabel"),
-            document.getElementById("doctorBillingTotalSittingsLabel"),
-            document.getElementById("doctorBillingCalculatedAmountLabel"),
-            document.getElementById("doctorBillingRecoveredTillDateLabel"),
-        ];
+        const row2El = document.getElementById("doctorBillingRctRow2");
         const descriptionEl = document.getElementById("doctorBillingDescriptionLabel");
         const feeEl = document.getElementById("doctorBillingAmountLabel");
-        const row2El = document.getElementById("doctorBillingRctRow2");
 
-        // Show/Hide RCT-specific fields
-        rctOnlyEls.forEach(el => {
-            if (el) el.style.display = isRCT ? "" : "none";
-        });
-
-        // Description and Fee should remain available for all charge types.
+        // RCT row is only shown for RCT charge type
+        if (row2El) row2El.style.display = isRCT ? "grid" : "none";
+        // Description and Charge Amount are always visible
         if (descriptionEl) descriptionEl.style.display = "";
         if (feeEl) feeEl.style.display = "";
-        if (row2El) row2El.style.display = "grid";
-        updateRctRecoveredTillDateField();
+
+        // When switching away from RCT, clear the auto-filled flag so amount is not stale
+        if (!isRCT) {
+            const amountInput = document.getElementById("doctorBillingAmountInput");
+            if (amountInput) delete amountInput.dataset.autoFilled;
+        }
+
+        updateRctFields();
     }
     document.getElementById("doctorBillingTypeInput").addEventListener("change", () => {
         updateBillingFieldVisibility();
         applyBillingAmountForSelectedType();
         applyBillingDescriptionForSelectedType();
     });
+    applyClinicChargeTypeOptions();
     updateBillingFieldVisibility();
     applyBillingAmountForSelectedType();
     applyBillingDescriptionForSelectedType();
 
     addMedicineRow();
     updateFollowUpDateFromMedicines({ force: true });
+    initSummaryMessageStyling();
     loadConsultationContext();
 
     // Set up intelligent queue status polling

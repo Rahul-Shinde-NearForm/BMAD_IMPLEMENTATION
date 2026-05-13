@@ -1,3 +1,5 @@
+import base64
+import io
 import json
 import logging
 import os
@@ -5,10 +7,11 @@ import re
 from urllib.parse import quote_plus
 from django.db import IntegrityError
 from urllib.parse import urlencode
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
+from django.core.cache import cache
 from django.core.management import call_command
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import Group, User
@@ -144,12 +147,44 @@ def _billing_ledger_payload(ledger):
 	}
 
 
+def _make_upi_qr_data_uri(upi_string: str) -> str:
+	"""Generate a QR code for a UPI intent string and return it as a base64 PNG data URI."""
+	try:
+		import qrcode
+		qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=8, border=2)
+		qr.add_data(upi_string)
+		qr.make(fit=True)
+		img = qr.make_image(fill_color="black", back_color="white")
+		buf = io.BytesIO()
+		img.save(buf, format="PNG")
+		return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+	except Exception:
+		return ""
+
+
+def _get_clinic_settings():
+	"""Return ClinicSettings with 5-minute cache to avoid repeated DB hits."""
+	obj = cache.get("clinic_settings_singleton")
+	if obj is None:
+		obj = ClinicSettings.get_solo()
+		cache.set("clinic_settings_singleton", obj, 300)
+	return obj
+
+
 def _opd_clinic_name():
-	return ClinicSettings.get_solo().clinic_name
+	return _get_clinic_settings().clinic_name
 
 
 def _opd_clinic_address():
-	return ClinicSettings.get_solo().clinic_address
+	return _get_clinic_settings().clinic_address
+
+
+def _opd_clinic_type():
+	return (_get_clinic_settings().clinic_type or "GENERAL").upper()
+
+
+def _is_dentist_clinic():
+	return _opd_clinic_type() == "DENTIST"
 
 
 def _patient_display_name(patient):
@@ -163,10 +198,13 @@ def _format_invoice_amount(value):
 
 def _invoice_current_total(invoice):
 	"""
-	For FOLLOW_UP_RCT invoices whose previous bill is fully paid, return the
-	sum of only the *current-visit* line items (i.e. items added after the
-	cloned ones).  For all other invoices, return invoice.total unchanged.
+	Returns the display total for an invoice.
+	Uses the denormalized current_visit_total if available (set at finalization).
+	Falls back to runtime computation for legacy invoices without it set.
 	"""
+	if invoice.current_visit_total is not None:
+		return invoice.current_visit_total
+
 	if invoice.ledger.visit_type != "FOLLOW_UP_RCT":
 		return invoice.total
 
@@ -187,79 +225,82 @@ def _invoice_current_total(invoice):
 	return sum((item.amount or Decimal("0")) for item in current_items)
 
 
-def _invoice_print_context(invoice, auto_print=False, previous_bill_no="", previous_visit_date="", previous_payment_status="", previous_invoice_id=None):
-	all_line_items = list(BillingLineItem.objects.filter(ledger_id=invoice.ledger_id).order_by("created_at"))
-	previous_payment_status_normalized = (previous_payment_status or "").strip().upper()
+def _batch_invoice_display_totals(invoices):
+	"""
+	Compute display totals for a list of invoices in O(1) extra queries instead
+	of N+1. Returns a dict mapping invoice.id → display_total Decimal.
+	"""
+	result = {}
+	rct_invoices = [inv for inv in invoices if inv.ledger.visit_type == "FOLLOW_UP_RCT"]
 
-	# Auto-detect previous invoice for FOLLOW_UP_RCT visits when not explicitly provided
-	if not previous_invoice_id and invoice.ledger.visit_type == "FOLLOW_UP_RCT":
-		auto_prev = (
+	if not rct_invoices:
+		return {inv.id: inv.total for inv in invoices}
+
+	# For non-RCT invoices, total is directly on the model
+	for inv in invoices:
+		if inv.ledger.visit_type != "FOLLOW_UP_RCT":
+			result[inv.id] = inv.total
+
+	if rct_invoices:
+		# Single query: fetch all previous invoices for all affected patients
+		patient_ids = list({inv.ledger.patient_id for inv in rct_invoices})
+		min_created_at = min(inv.created_at for inv in rct_invoices)
+		candidate_prevs = list(
 			BillingInvoice.objects
 			.select_related("ledger")
-			.filter(ledger__patient_id=invoice.ledger.patient_id, created_at__lt=invoice.created_at)
-			.exclude(id=invoice.id)
-			.order_by("-created_at")
-			.first()
+			.filter(ledger__patient_id__in=patient_ids, created_at__lt=min_created_at)
+			.order_by("ledger__patient_id", "-created_at")
 		)
-		if auto_prev:
-			previous_invoice_id = auto_prev.id
-			if not previous_bill_no:
-				previous_bill_no = auto_prev.bill_number
-			if not previous_visit_date:
-				previous_visit_date = str(auto_prev.ledger.visit_date)
-			if not previous_payment_status_normalized:
-				previous_payment_status_normalized = auto_prev.payment_status
+		# Map patient_id → latest previous invoice
+		prev_by_patient = {}
+		for p in candidate_prevs:
+			pid = p.ledger.patient_id
+			if pid not in prev_by_patient:
+				prev_by_patient[pid] = p
 
-	previous_line_items_display = []
-	if previous_invoice_id:
-		try:
-			prev_invoice = BillingInvoice.objects.select_related("ledger").get(id=previous_invoice_id)
-			prev_items = BillingLineItem.objects.filter(ledger_id=prev_invoice.ledger_id).order_by("created_at")
-			previous_line_items_display = [
-				{
-					"line_type_display": item.get_line_type_display(),
-					"description": item.description or "-",
-					"amount": _format_invoice_amount(item.amount),
-				}
-				for item in prev_items
-			]
-			# Current items = skip first N cloned items (N = count of previous invoice items)
-			n_cloned = prev_items.count()
-			current_items = all_line_items[n_cloned:]
-		except BillingInvoice.DoesNotExist:
-			current_items = all_line_items
-	else:
-		current_items = all_line_items
+		# Fetch all line items for RCT invoices + their previous invoices in one query
+		all_ledger_ids = set()
+		for inv in rct_invoices:
+			all_ledger_ids.add(inv.ledger_id)
+			prev = prev_by_patient.get(inv.ledger.patient_id)
+			if prev:
+				all_ledger_ids.add(prev.ledger_id)
 
+		items_by_ledger = {}
+		for item in BillingLineItem.objects.filter(ledger_id__in=all_ledger_ids).order_by("ledger_id", "created_at"):
+			items_by_ledger.setdefault(item.ledger_id, []).append(item)
+
+		for inv in rct_invoices:
+			prev = prev_by_patient.get(inv.ledger.patient_id)
+			if not prev or prev.payment_status != "DONE":
+				result[inv.id] = inv.total
+				continue
+			n_cloned = len(items_by_ledger.get(prev.ledger_id, []))
+			all_items = items_by_ledger.get(inv.ledger_id, [])
+			current_items = all_items[n_cloned:]
+			result[inv.id] = sum((item.amount or Decimal("0")) for item in current_items)
+
+	return result
+
+
+def _invoice_print_context(invoice, auto_print=False, previous_bill_no="", previous_visit_date="", previous_payment_status="", previous_invoice_id=None):
+	all_line_items = list(BillingLineItem.objects.filter(ledger_id=invoice.ledger_id).order_by("created_at"))
 	line_items_display = [
 		{
 			"line_type_display": item.get_line_type_display(),
 			"description": item.description or "-",
 			"amount": _format_invoice_amount(item.amount),
 		}
-		for item in current_items
+		for item in all_line_items
 	]
-
-	# For follow-up RCT prints with a settled previous bill, show totals only for current visit items.
-	if previous_line_items_display and previous_payment_status_normalized == "DONE":
-		current_subtotal_amount = sum((item.amount or Decimal("0")) for item in current_items)
-		print_subtotal = current_subtotal_amount
-		print_discount = Decimal("0")
-		print_tax = Decimal("0")
-		print_total = current_subtotal_amount
-	else:
-		print_subtotal = invoice.subtotal
-		print_discount = invoice.discount
-		print_tax = invoice.tax
-		print_total = invoice.total
 
 	clinic_settings = ClinicSettings.get_solo()
 	return {
 		"auto_print": auto_print,
-		"previous_bill_no": (previous_bill_no or "").strip(),
-		"previous_visit_date": (previous_visit_date or "").strip(),
-		"previous_payment_status": previous_payment_status_normalized,
-		"previous_line_items_display": previous_line_items_display,
+		"previous_bill_no": "",
+		"previous_visit_date": "",
+		"previous_payment_status": "",
+		"previous_line_items_display": [],
 		"clinic_name": _opd_clinic_name(),
 		"clinic_address": _opd_clinic_address(),
 		"clinic_phone": clinic_settings.clinic_phone,
@@ -274,10 +315,10 @@ def _invoice_print_context(invoice, auto_print=False, previous_bill_no="", previ
 		"doctor_name": invoice.ledger.doctor.display_name,
 		"doctor_specialty": invoice.ledger.doctor.specialty,
 		"line_items_display": line_items_display,
-		"subtotal": _format_invoice_amount(print_subtotal),
-		"discount": _format_invoice_amount(print_discount),
-		"tax": _format_invoice_amount(print_tax),
-		"total": _format_invoice_amount(print_total),
+		"subtotal": _format_invoice_amount(invoice.subtotal),
+		"discount": _format_invoice_amount(invoice.discount),
+		"tax": _format_invoice_amount(invoice.tax),
+		"total": _format_invoice_amount(invoice.total),
 	}
 
 
@@ -395,7 +436,7 @@ def doctor_appointments_page(request):
 @login_required
 @role_required("Doctor", "Admin")
 def doctor_consultation_page(request):
-	return render(request, "doctor_consultation.html")
+	return render(request, "doctor_consultation.html", {"clinic_type": _opd_clinic_type()})
 
 
 @require_GET
@@ -604,14 +645,14 @@ def patient_opd_history_view(request, patient_id):
 @login_required
 def patient_register_form(request):
 	form = PatientRegistrationForm()
-	return render(request, "patient_register.html", {"form": form})
+	return render(request, "patient_register.html", {"form": form, "clinic_type": _opd_clinic_type()})
 
 
 @require_GET
 @login_required
 @role_required("Receptionist", "Admin")
 def appointment_book_form(request):
-	return render(request, "appointment_book.html")
+	return render(request, "appointment_book.html", {"clinic_type": _opd_clinic_type()})
 
 
 @require_GET
@@ -879,6 +920,9 @@ def patient_search(request):
 	name = request.GET.get("name", "").strip()
 	dob = request.GET.get("dob", "").strip()
 	age_raw = request.GET.get("age", "").strip()
+	page_raw = request.GET.get("page", "1").strip()
+	page_size = 20
+
 	age = None
 	if age_raw:
 		try:
@@ -886,7 +930,17 @@ def patient_search(request):
 		except ValueError:
 			return JsonResponse({"error": "invalid_age"}, status=400)
 
+	try:
+		page = max(1, int(page_raw))
+	except ValueError:
+		page = 1
+
 	patients = search_patients(mrn=mrn, phone=phone, name=name, dob=dob, age=age, opd_number=opd_number)
+	total_count = patients.count()
+	start = (page - 1) * page_size
+	end = start + page_size
+	page_patients = patients[start:end]
+
 	items = [
 		{
 			"id": patient.id,
@@ -901,14 +955,22 @@ def patient_search(request):
 			"gender": patient.get_gender_display(),
 			"address": patient.address_line1,
 		}
-		for patient in patients[:20]
+		for patient in page_patients
 	]
 
 	query_type = "patient_opd_number" if opd_number else "mrn" if mrn else "phone" if phone else "name_age" if (name or age_raw) else "none"
 	query_value = opd_number or mrn or phone or f"{name}|{age_raw or dob}"
-	log_search(request.user.username, query_type, query_value, len(items))
+	log_search(request.user.username, query_type, query_value, total_count)
 
-	return JsonResponse({"items": items})
+	return JsonResponse({
+		"items": items,
+		"pagination": {
+			"page": page,
+			"page_size": page_size,
+			"total": total_count,
+			"has_next": end < total_count,
+		},
+	})
 
 
 @require_GET
@@ -1043,6 +1105,9 @@ def appointment_book(request):
 	form = AppointmentBookForm(request.POST)
 	if not form.is_valid():
 		return JsonResponse({"error": "validation_failed", "details": form.errors}, status=400)
+
+	if form.cleaned_data.get("visit_type") == "FOLLOW_UP_RCT" and not _is_dentist_clinic():
+		return JsonResponse({"error": "follow_up_rct_not_allowed_for_general_clinic"}, status=400)
 
 	try:
 		appointment = book_appointment(form.cleaned_data, request.user.username)
@@ -1415,6 +1480,10 @@ def yesterday_missed_report_view(request):
 @login_required
 @role_required("Receptionist", "Admin")
 def tomorrow_reminder_report_pdf_download_view(request):
+	from reportlab.lib.pagesizes import A4
+	from reportlab.lib.units import mm
+	from reportlab.pdfgen import canvas as rl_canvas
+
 	doctor_name = (request.GET.get("doctor_name") or "").strip()
 	doctor_id = None
 	resolved_doctor_name = "All Doctors"
@@ -1428,33 +1497,151 @@ def tomorrow_reminder_report_pdf_download_view(request):
 
 	target_date, items = tomorrow_reminder_report(doctor_id=doctor_id)
 
-	lines = [
-		"OPD Tomorrow Reminder Call List",
-		f"Date: {target_date}",
-		f"Doctor Filter: {resolved_doctor_name}",
-		f"Total Appointments: {len(items)}",
-		"",
-	]
+	buf = io.BytesIO()
+	page_w, page_h = A4
+	c = rl_canvas.Canvas(buf, pagesize=A4)
+	margin = 20 * mm
+	y = page_h - margin
 
-	if items:
-		for idx, appointment in enumerate(items, start=1):
-			patient_name = f"{appointment.patient.first_name} {appointment.patient.last_name}".strip()
-			lines.extend(
-				[
-					f"{idx}. {patient_name}",
-					f"   OPD Number: {appointment.opd_number or '-'}",
-					f"   Mobile: {appointment.patient.phone or '-'}",
-					f"   Doctor: {appointment.doctor.display_name}",
-					f"   Slot Time: {appointment.start_time.strftime('%H:%M')}",
-					"",
-				]
-			)
+	# Title block
+	clinic_name = _opd_clinic_name()
+	c.setFont("Helvetica-Bold", 16)
+	c.drawCentredString(page_w / 2, y, clinic_name)
+	y -= 20
+	c.setFont("Helvetica-Bold", 13)
+	c.drawCentredString(page_w / 2, y, "Tomorrow's Reminder Call List")
+	y -= 16
+	c.setFont("Helvetica", 10)
+	c.drawCentredString(page_w / 2, y, f"Date: {target_date}   |   Doctor: {resolved_doctor_name}   |   Total: {len(items)}")
+	y -= 5
+	c.setLineWidth(0.5)
+	c.line(margin, y, page_w - margin, y)
+	y -= 14
+
+	if not items:
+		c.setFont("Helvetica", 11)
+		c.drawString(margin, y, "No appointments scheduled for tomorrow.")
 	else:
-		lines.append("No appointments scheduled for tomorrow.")
+		col_no     = margin
+		col_name   = margin + 18 * mm
+		col_opd    = margin + 68 * mm
+		col_phone  = margin + 108 * mm
+		col_doctor = margin + 143 * mm
+		col_time   = margin + 178 * mm
 
-	pdf_like_content = "\n".join(lines)
-	response = HttpResponse(pdf_like_content, content_type="application/pdf")
+		c.setFont("Helvetica-Bold", 9)
+		c.drawString(col_no, y, "#")
+		c.drawString(col_name, y, "Patient Name")
+		c.drawString(col_opd, y, "OPD No")
+		c.drawString(col_phone, y, "Mobile")
+		c.drawString(col_doctor, y, "Doctor")
+		c.drawString(col_time, y, "Time")
+		y -= 4
+		c.line(margin, y, page_w - margin, y)
+		y -= 11
+
+		for idx, appt in enumerate(items, start=1):
+			if y < margin + 15 * mm:
+				c.showPage()
+				y = page_h - margin
+			patient_name = f"{appt.patient.first_name} {appt.patient.last_name}".strip()
+			c.setFont("Helvetica", 9)
+			c.drawString(col_no, y, str(idx))
+			c.drawString(col_name, y, patient_name[:28])
+			c.drawString(col_opd, y, appt.opd_number or "-")
+			c.drawString(col_phone, y, appt.patient.phone or "-")
+			c.drawString(col_doctor, y, appt.doctor.display_name[:20])
+			c.drawString(col_time, y, appt.start_time.strftime("%H:%M"))
+			y -= 14
+
+	c.save()
+	buf.seek(0)
+	response = HttpResponse(buf.read(), content_type="application/pdf")
 	response["Content-Disposition"] = f'attachment; filename="tomorrow-reminder-{target_date}.pdf"'
+	return response
+
+
+@require_GET
+@login_required
+@role_required("Receptionist", "Admin")
+def yesterday_missed_report_pdf_download_view(request):
+	from reportlab.lib.pagesizes import A4
+	from reportlab.lib.units import mm
+	from reportlab.pdfgen import canvas as rl_canvas
+
+	doctor_name = (request.GET.get("doctor_name") or "").strip()
+	doctor_id = None
+	resolved_doctor_name = "All Doctors"
+	if doctor_name:
+		try:
+			doctor = Doctor.objects.get(full_name__icontains=doctor_name)
+			doctor_id = doctor.id
+			resolved_doctor_name = doctor.display_name
+		except Doctor.DoesNotExist:
+			resolved_doctor_name = doctor_name
+
+	target_date, items = yesterday_missed_report(doctor_id=doctor_id)
+
+	buf = io.BytesIO()
+	page_w, page_h = A4
+	c = rl_canvas.Canvas(buf, pagesize=A4)
+	margin = 20 * mm
+	y = page_h - margin
+
+	clinic_name = _opd_clinic_name()
+	c.setFont("Helvetica-Bold", 16)
+	c.drawCentredString(page_w / 2, y, clinic_name)
+	y -= 20
+	c.setFont("Helvetica-Bold", 13)
+	c.drawCentredString(page_w / 2, y, "Yesterday Missed Follow-up List")
+	y -= 16
+	c.setFont("Helvetica", 10)
+	c.drawCentredString(page_w / 2, y, f"Date: {target_date}   |   Doctor: {resolved_doctor_name}   |   Total: {len(items)}")
+	y -= 5
+	c.setLineWidth(0.5)
+	c.line(margin, y, page_w - margin, y)
+	y -= 14
+
+	if not items:
+		c.setFont("Helvetica", 11)
+		c.drawString(margin, y, "No missed follow-up patients found for yesterday.")
+	else:
+		col_no = margin
+		col_name = margin + 18 * mm
+		col_opd = margin + 68 * mm
+		col_phone = margin + 108 * mm
+		col_doctor = margin + 143 * mm
+		col_time = margin + 178 * mm
+
+		c.setFont("Helvetica-Bold", 9)
+		c.drawString(col_no, y, "#")
+		c.drawString(col_name, y, "Patient Name")
+		c.drawString(col_opd, y, "OPD No")
+		c.drawString(col_phone, y, "Mobile")
+		c.drawString(col_doctor, y, "Doctor")
+		c.drawString(col_time, y, "Time")
+		y -= 4
+		c.line(margin, y, page_w - margin, y)
+		y -= 11
+
+		for idx, q in enumerate(items, start=1):
+			if y < margin + 15 * mm:
+				c.showPage()
+				y = page_h - margin
+			patient_name = _patient_display_name(q.appointment.patient)
+			c.setFont("Helvetica", 9)
+			c.drawString(col_no, y, str(idx))
+			c.drawString(col_name, y, patient_name[:28])
+			c.drawString(col_opd, y, q.appointment.opd_number or "-")
+			c.drawString(col_phone, y, q.appointment.patient.phone or "-")
+			c.drawString(col_doctor, y, q.appointment.doctor.display_name[:20])
+			c.drawString(col_time, y, q.appointment.start_time.strftime("%H:%M"))
+			y -= 14
+
+	c.save()
+	buf.seek(0)
+	response = HttpResponse(buf.read(), content_type="application/pdf")
+	response["Content-Disposition"] = f'attachment; filename="yesterday-missed-{target_date}.pdf"'
 	return response
 
 
@@ -1711,6 +1898,7 @@ def user_role_management(request):
 			"current_user_id": request.user.id,
 			"clinic_name": clinic_settings.clinic_name,
 			"clinic_address": clinic_settings.clinic_address,
+			"clinic_type": clinic_settings.clinic_type,
 			"clinic_phone": clinic_settings.clinic_phone,
 			"clinic_mob": clinic_settings.clinic_mob,
 			"upi_id": clinic_settings.upi_id,
@@ -1784,6 +1972,7 @@ def role_delete(request):
 def clinic_settings_update(request):
 	clinic_name = (request.POST.get("clinic_name") or "").strip()
 	clinic_address = (request.POST.get("clinic_address") or "").strip()
+	clinic_type = (request.POST.get("clinic_type") or "GENERAL").strip().upper()
 	clinic_phone = (request.POST.get("clinic_phone") or "").strip()
 	clinic_mob = (request.POST.get("clinic_mob") or "").strip()
 	upi_id = (request.POST.get("upi_id") or "").strip()
@@ -1792,10 +1981,13 @@ def clinic_settings_update(request):
 	
 	if not clinic_name:
 		return _redirect_user_mgmt("error", "Clinic name is required.")
+	if clinic_type not in {"GENERAL", "DENTIST"}:
+		return _redirect_user_mgmt("error", "Clinic type must be General or Dentist.")
 	
 	settings = ClinicSettings.get_solo()
 	settings.clinic_name = clinic_name
 	settings.clinic_address = clinic_address
+	settings.clinic_type = clinic_type
 	settings.clinic_phone = clinic_phone
 	settings.clinic_mob = clinic_mob
 	settings.upi_id = upi_id
@@ -1806,7 +1998,8 @@ def clinic_settings_update(request):
 	if "logo" in request.FILES:
 		settings.logo = request.FILES["logo"]
 	
-	settings.save(update_fields=["clinic_name", "clinic_address", "clinic_phone", "clinic_mob", "upi_id", "registration_number", "registration_authority", "logo", "updated_at"])
+	settings.save(update_fields=["clinic_name", "clinic_address", "clinic_type", "clinic_phone", "clinic_mob", "upi_id", "registration_number", "registration_authority", "logo", "updated_at"])
+	cache.delete("clinic_settings_singleton")  # Invalidate cached settings
 	return _redirect_user_mgmt("success", "Clinic details updated successfully.")
 
 
@@ -2070,6 +2263,9 @@ def appointment_add_emergency(request):
 	if not form.is_valid():
 		return JsonResponse({"error": "validation_failed", "details": form.errors}, status=400)
 
+	if (form.cleaned_data.get("visit_type") or "NEW") == "FOLLOW_UP_RCT" and not _is_dentist_clinic():
+		return JsonResponse({"error": "follow_up_rct_not_allowed_for_general_clinic"}, status=400)
+
 	patient_id = form.cleaned_data.get("patient_id")
 	if patient_id:
 		patient_payload = patient_id
@@ -2278,6 +2474,7 @@ def consultation_context(request, appointment_id):
 	history_consultations = (
 		Consultation.objects
 		.select_related("doctor", "appointment")
+		.prefetch_related("vitals")
 		.filter(patient_id=patient.id)
 		.exclude(appointment_id=appointment_id)
 		.order_by("-created_at")[:5]
@@ -2983,7 +3180,7 @@ def billing_ledger_by_opd_get(request):
 
 @login_required
 @require_POST
-@role_required("Receptionist", "Admin")
+@role_required("Receptionist", "Doctor", "Admin")
 def billing_ledger_by_opd_create(request):
 	opd_number = request.POST.get("opd_number", "").strip()
 	appointment_id_raw = request.POST.get("appointment_id", "").strip()
@@ -3037,6 +3234,9 @@ def billing_ledger_add_line_item(request, ledger_id):
 	if not line_type or not amount:
 		return JsonResponse({"error": "line_type_and_amount_required"}, status=400)
 
+	if line_type == "RCT" and not _is_dentist_clinic():
+		return JsonResponse({"error": "rct_not_allowed_for_general_clinic"}, status=403)
+
 	if request.user.groups.filter(name="Doctor").exists() and line_type not in {"RADIOLOGY", "MISC", "RCT", "OPD_NEW_FEE", "OPD_REPEAT_FEE"}:
 		return JsonResponse({"error": "doctor_line_type_not_allowed"}, status=403)
 
@@ -3088,23 +3288,47 @@ def billing_ledger_remove_line_item(request, ledger_id, line_item_id):
 @role_required("Doctor", "Receptionist", "Admin")
 def billing_ledger_get_rct_case_amount(request, ledger_id):
 	"""
-	Fetch the RCT total case amount from the first RCT line item in this ledger.
-	Used to auto-fill the Total Case Amount field on subsequent RCT visits.
+	Returns:
+	  total_case_amount  - total agreed cost for the full RCT course
+	  total_recovered    - sum of RCT charges already paid in previous finalized visits
 	"""
 	try:
-		ledger = BillingLedger.objects.get(id=ledger_id)
+		ledger = BillingLedger.objects.select_related("patient").get(id=ledger_id)
 	except BillingLedger.DoesNotExist:
 		return JsonResponse({"error": "ledger_not_found"}, status=404)
-	
-	# Find the first RCT line item with a total_case_amount
-	rct_item = BillingLineItem.objects.filter(ledger=ledger, total_case_amount__isnull=False).first()
-	if rct_item:
-		return JsonResponse({
-			"status": "success",
-			"total_case_amount": float(rct_item.total_case_amount),
-			"total_sittings": rct_item.total_sittings,
-		})
-	return JsonResponse({"status": "success", "total_case_amount": None})
+
+	# Total case amount — current ledger first, then fall back to previous
+	rct_item = BillingLineItem.objects.filter(ledger=ledger, line_type="RCT", total_case_amount__isnull=False).first()
+	if not rct_item:
+		rct_item = (
+			BillingLineItem.objects
+			.filter(ledger__patient_id=ledger.patient_id, line_type="RCT", total_case_amount__isnull=False)
+			.exclude(ledger_id=ledger_id)
+			.order_by("-ledger__visit_date")
+			.first()
+		)
+
+	total_case_amount = float(rct_item.total_case_amount) if rct_item and rct_item.total_case_amount else None
+
+	# Sum of ALL finalized RCT charges for this patient across all visits
+	# (including the current ledger if it's already finalized — e.g. when viewing after payment)
+	from django.db.models import Sum as _Sum
+	recovered_qs = (
+		BillingLineItem.objects
+		.filter(
+			ledger__patient_id=ledger.patient_id,
+			ledger__status="FINALIZED",
+			line_type="RCT",
+		)
+		.aggregate(total=_Sum("amount"))
+	)
+	total_recovered = float(recovered_qs["total"] or 0)
+
+	return JsonResponse({
+		"status": "success",
+		"total_case_amount": total_case_amount,
+		"total_recovered": total_recovered,
+	})
 
 
 @login_required
@@ -3135,7 +3359,7 @@ def billing_ledger_repeat_fee_decision(request, ledger_id):
 
 @login_required
 @require_POST
-@role_required("Receptionist", "Admin")
+@role_required("Receptionist", "Doctor", "Admin")
 def billing_ledger_finalize(request, ledger_id):
 	tax = request.POST.get("tax", "0").strip() or "0"
 	discount = request.POST.get("discount", "0").strip() or "0"
@@ -3317,16 +3541,21 @@ def billing_invoice_live_feed(request):
 	except ValueError:
 		return JsonResponse({"error": "invalid_limit"}, status=400)
 
-	invoices = (
+	invoices = list(
 		BillingInvoice.objects.select_related("ledger", "ledger__patient", "ledger__doctor")
-		.filter(created_at__date=filter_date)
+		.filter(
+			created_at__gte=filter_date,
+			created_at__lt=filter_date + timedelta(days=1),
+		)
 		.order_by("-created_at")[:limit]
 	)
+
+	display_totals = _batch_invoice_display_totals(invoices)
 
 	items = []
 	for invoice in invoices:
 		patient_name = _patient_display_name(invoice.ledger.patient)
-		display_total = _invoice_current_total(invoice)
+		display_total = display_totals[invoice.id]
 		items.append(
 			{
 				"invoice_id": invoice.id,
@@ -3396,17 +3625,17 @@ def billing_invoice_history_by_patient(request):
 
 	if date_from:
 		try:
-			datetime.strptime(date_from, "%Y-%m-%d")
+			df = datetime.strptime(date_from, "%Y-%m-%d").date()
 		except ValueError:
 			return JsonResponse({"error": "invalid_date_from"}, status=400)
-		invoices = invoices.filter(created_at__date__gte=date_from)
+		invoices = invoices.filter(created_at__gte=df)
 
 	if date_to:
 		try:
-			datetime.strptime(date_to, "%Y-%m-%d")
+			dt = datetime.strptime(date_to, "%Y-%m-%d").date()
 		except ValueError:
 			return JsonResponse({"error": "invalid_date_to"}, status=400)
-		invoices = invoices.filter(created_at__date__lte=date_to)
+		invoices = invoices.filter(created_at__lt=dt + timedelta(days=1))
 
 	if min_total_raw:
 		try:
@@ -3422,11 +3651,12 @@ def billing_invoice_history_by_patient(request):
 			return JsonResponse({"error": "invalid_max_total"}, status=400)
 		invoices = invoices.filter(total__lte=max_total)
 
-	invoices = invoices.order_by("-created_at")
+	invoices = list(invoices.order_by("-created_at")[:100])
+	display_totals = _batch_invoice_display_totals(invoices)
 
 	items = []
 	for invoice in invoices:
-		display_total = _invoice_current_total(invoice)
+		display_total = display_totals[invoice.id]
 		items.append(
 			{
 				"invoice_id": invoice.id,
@@ -3565,7 +3795,7 @@ def billing_invoice_update(request, invoice_id):
 
 @login_required
 @require_GET
-@role_required("Receptionist", "Admin")
+@role_required("Receptionist", "Doctor", "Admin")
 @xframe_options_sameorigin
 def billing_invoice_print(request, invoice_id):
 	try:
@@ -3587,7 +3817,7 @@ def billing_invoice_print(request, invoice_id):
 
 @login_required
 @require_GET
-@role_required("Receptionist", "Admin")
+@role_required("Receptionist", "Doctor", "Admin")
 def billing_invoice_pdf_download(request, invoice_id):
 	try:
 		invoice = BillingInvoice.objects.select_related("ledger", "ledger__patient", "ledger__doctor").get(id=invoice_id)

@@ -15,12 +15,21 @@
             <label>Doctor Name (optional) <input type="text" name="doctor_name" placeholder="e.g. Dr. Sharma" /></label>
             <button type="submit">Load Tomorrow List</button>
             <button type="button" id="loadMissedListBtn">Load Yesterday Missed List</button>
-            <button type="button" id="downloadReminderPdfBtn">Download PDF</button>
+            <button type="button" id="downloadReminderPdfBtn" style="display:none;">&#11015; Download PDF</button>
         </form>
         <div id="reminderResult"></div>
     </section>
 
     <script>
+        let currentListType = null; // 'tomorrow' or 'yesterday'
+
+        function showDownloadBtn(listType) {
+            currentListType = listType;
+            const btn = document.getElementById("downloadReminderPdfBtn");
+            btn.style.display = "inline-block";
+            btn.textContent = listType === "tomorrow" ? "\u2B07 Download Tomorrow PDF" : "\u2B07 Download Missed PDF";
+        }
+
         function openRebook(patientId, doctorId, mobile) {
             const params = new URLSearchParams();
             if (patientId) params.set("patient_id", String(patientId));
@@ -84,6 +93,7 @@
 
             if (res.ok) {
                 renderReminderTable(data, "Tomorrow's Reminder Call List");
+                showDownloadBtn("tomorrow");
             } else {
                 resultEl.className = "result-box result-error";
                 resultEl.textContent = "Error loading reminder list. Please try again.";
@@ -101,7 +111,7 @@
             try { data = JSON.parse(await res.text()); } catch (_) { }
 
             if (res.ok) {
-                renderReminderTable(data, "Yesterday Missed Appointments (Call Back List)");
+                renderReminderTable(data, "Yesterday Missed Appointments (Call Back List)"); showDownloadBtn("yesterday");
             } else {
                 resultEl.className = "result-box result-error";
                 resultEl.textContent = "Error loading missed appointments list. Please try again.";
@@ -112,10 +122,10 @@
             const form = document.getElementById("reminderForm");
             const params = new URLSearchParams(new FormData(form));
             const query = params.toString();
-            const url = query
-                ? `/api/reports/tomorrow-patients/pdf/?${query}`
+            const base = currentListType === "yesterday"
+                ? "/api/reports/yesterday-missed/pdf/"
                 : "/api/reports/tomorrow-patients/pdf/";
-            window.location.href = url;
+            window.location.href = query ? `${base}?${query}` : base;
         });
     </script>
 </div>

@@ -6,41 +6,46 @@
 {% block content %}
 <div class="container">
     <style>
-        @keyframes receptionBlink {
-            0% {
-                background-color: #fff4bf;
-            }
-
-            50% {
-                background-color: #ffe08a;
-            }
-
-            100% {
-                background-color: #fff4bf;
-            }
-        }
-
-        .reception-called-row {
-            animation: receptionBlink 1s infinite;
-        }
-
         .appointment-layout {
             display: grid;
-            grid-template-columns: minmax(280px, 1fr) minmax(280px, 1fr) minmax(280px, 1fr);
-            gap: 1.5rem;
+            grid-template-columns: repeat(3, minmax(300px, 1fr));
+            gap: 1rem;
             align-items: start;
-            margin-bottom: 1.5rem;
         }
 
         .appointment-panel {
+            background: #fff;
             border: 1px solid #e5e7eb;
             border-radius: 10px;
             padding: 1rem;
-            background: #fff;
         }
 
-        .appointment-panel h2 {
-            margin-top: 0;
+        .summary-card {
+            background: #f8fbff;
+            border: 1px solid #cfe0ff;
+            border-radius: 8px;
+            padding: 0.75rem;
+            margin-top: 0.5rem;
+            display: grid;
+            gap: 0.3rem;
+        }
+
+        .summary-card-title {
+            font-weight: 700;
+            color: #173b7a;
+            margin-bottom: 0.15rem;
+        }
+
+        .summary-card-row {
+            font-size: 0.93rem;
+            color: #1f2937;
+            line-height: 1.3;
+        }
+
+        .summary-card-note {
+            margin-top: 0.5rem;
+            font-weight: 700;
+            color: #14532d;
         }
 
         @media (max-width: 1200px) {
@@ -59,6 +64,8 @@
     <section class="toolbar">
         <button class="btn-link" onclick="window.location.href = document.referrer || '/'">&#8592; Back</button>
     </section>
+
+    <div id="appointmentSummaryMessage" class="result-box" style="display:none; margin-bottom:1rem;"></div>
 
     <div class="appointment-layout">
         <div class="appointment-panel">
@@ -108,7 +115,7 @@
                 </label>
                 <div><button type="submit">Book Appointment</button></div>
             </form>
-            <pre id="appointmentBookResult" class="result-box"></pre>
+            <pre id="appointmentBookResult" class="result-box" style="display:none;"></pre>
         </div>
 
         <div class="appointment-panel">
@@ -124,15 +131,10 @@
                 <label>Description <input type="text" name="description" value="OPD Registration Fee" /></label>
                 <div><button type="button" id="appointmentBillingGetInvoiceBtn">Get Invoice</button></div>
             </form>
-            <pre id="appointmentBillingResult" class="result-box"></pre>
-            <div id="appointmentBillingInvoiceResult" class="result-box"></div>
+            <pre id="appointmentBillingResult" class="result-box" style="display:none;"></pre>
+            <div id="appointmentBillingInvoiceResult" class="result-box" style="display:none;"></div>
         </div>
     </div>
-
-    <section style="margin-top: 1.5rem;">
-        <h2>Doctor Emergency Reschedule Alerts</h2>
-        <div id="dayRescheduleAlertsResult" class="result-box">Loading pending alerts...</div>
-    </section>
 
     <section id="patientAppointmentsSection" style="display:none; margin-top: 1.5rem;">
         <h2>3. Existing Appointments</h2>
@@ -185,10 +187,33 @@
         const prefillPhone = bookingPrefillParams.get("phone");
         const DEFAULT_OPD_EXISTING_PATIENT_FEE = 100;
         const DOCTOR_EXISTING_FEE_BY_ID = new Map();
+        const CLINIC_TYPE = "{{ clinic_type|default:'GENERAL'|upper|escapejs }}";
+        const IS_DENTIST_CLINIC = CLINIC_TYPE === "DENTIST";
 
         let selectedPatient = null;
+        let latestAppointmentContext = null;
         let billingDisabledForRctFollowUp = false;
+        let isFirstFollowUpRctVisit = false;
         let billingStateRequestToken = 0;
+
+        function applyClinicVisitTypeOptions() {
+            const visitTypeSelect = document.querySelector('#appointmentBookForm select[name="visit_type"]');
+            if (!visitTypeSelect) return;
+            const rctOption = visitTypeSelect.querySelector('option[value="FOLLOW_UP_RCT"]');
+            if (!rctOption) return;
+
+            if (IS_DENTIST_CLINIC) {
+                rctOption.hidden = false;
+                rctOption.disabled = false;
+                return;
+            }
+
+            if (visitTypeSelect.value === "FOLLOW_UP_RCT") {
+                visitTypeSelect.value = "NEW";
+            }
+            rctOption.hidden = true;
+            rctOption.disabled = true;
+        }
 
         function parseFee(value, fallback) {
             const num = Number(value);
@@ -209,66 +234,39 @@
             if (!billingForm || !patient) {
                 return;
             }
-
-            const opdInput = billingForm.elements.opd_number;
-            const amountInput = billingForm.elements.amount;
-            const descriptionInput = billingForm.elements.description;
-            const patientOpd = (patient.opd_number || "").trim();
-
-            if (opdInput && patientOpd) {
-                opdInput.value = patientOpd;
-                opdInput.style.borderColor = "#4CAF50";
-                setTimeout(() => {
-                    opdInput.style.borderColor = "";
-                }, 1500);
-            }
-
-            if (amountInput) {
-                amountInput.value = getSelectedDoctorExistingFee().toFixed(2);
-            }
-
-            if (descriptionInput && (!descriptionInput.value || descriptionInput.value === "OPD Registration Fee")) {
-                descriptionInput.value = "OPD Existing Patient Fee";
-            }
+            billingForm.elements.opd_number.value = patient.opd_number || "";
+            billingForm.elements.amount.value = getSelectedDoctorExistingFee().toFixed(2);
+            billingForm.elements.description.value = "OPD Existing Patient Fee";
         }
 
         function setBillingOptionDisabled(disabled, message = "") {
-            const billingForm = document.getElementById("appointmentBillingForm");
-            const getInvoiceBtn = document.getElementById("appointmentBillingGetInvoiceBtn");
+            billingDisabledForRctFollowUp = Boolean(disabled);
+            const form = document.getElementById("appointmentBillingForm");
             const resultBox = document.getElementById("appointmentBillingResult");
-            const billingHint = document.getElementById("appointmentBillingHint");
-            if (!billingForm || !getInvoiceBtn || !resultBox) {
+            const hint = document.getElementById("appointmentBillingHint");
+            if (!form) {
                 return;
             }
 
-            billingDisabledForRctFollowUp = Boolean(disabled);
-            Array.from(billingForm.elements).forEach((el) => {
-                if (!el || el.id === "appointmentBillingGetInvoiceBtn") {
-                    return;
-                }
-                el.disabled = billingDisabledForRctFollowUp;
+            Array.from(form.elements).forEach((field) => {
+                field.disabled = billingDisabledForRctFollowUp;
             });
-            getInvoiceBtn.disabled = billingDisabledForRctFollowUp;
-            getInvoiceBtn.style.opacity = billingDisabledForRctFollowUp ? "0.6" : "1";
-            getInvoiceBtn.style.cursor = billingDisabledForRctFollowUp ? "not-allowed" : "pointer";
 
             if (billingDisabledForRctFollowUp) {
-                resultBox.className = "result-box result-success";
-                resultBox.textContent = message || "Billing option is disabled for RCT follow-up visits. Continue in the existing invoice ledger.";
-                if (billingHint) {
-                    billingHint.textContent = "Billing is disabled for this follow-up. Continue with the existing invoice ledger (no new OPD fee).";
-                    billingHint.style.color = "#92400e";
+                if (resultBox) {
+                    resultBox.className = "result-box result-error";
+                    resultBox.textContent = message || "Billing option is disabled for this visit.";
                 }
-            } else if (resultBox.textContent && resultBox.textContent.includes("Billing option is disabled for RCT follow-up visits")) {
-                resultBox.className = "result-box";
-                resultBox.textContent = "";
-                if (billingHint) {
-                    billingHint.textContent = "For FOLLOW_UP_RCT, a new invoice is generated by copying previous invoice values (no minus-sign display).";
-                    billingHint.style.color = "#555";
+                if (hint) {
+                    hint.style.color = "#b91c1c";
+                    hint.textContent = message || "Billing option is disabled for this visit.";
                 }
-            } else if (billingHint) {
-                billingHint.textContent = "For FOLLOW_UP_RCT, a new invoice is generated by copying previous invoice values (no minus-sign display).";
-                billingHint.style.color = "#555";
+                return;
+            }
+
+            if (hint) {
+                hint.style.color = "#555";
+                hint.textContent = "For FOLLOW_UP_RCT, a new invoice is generated by copying the previous invoice values and preserving payment history details.";
             }
         }
 
@@ -305,6 +303,39 @@
 
             const visitType = String(bookingForm.elements.visit_type.value || "").toUpperCase();
             const opdNumber = String((selectedPatient && selectedPatient.opd_number) || billingForm.elements.opd_number.value || "").trim();
+
+            // FOLLOW_UP_RCT: 1st visit → receptionist adds OPD fee (doctor finalizes)
+            //                 2nd+ visit → doctor handles everything (receptionist fully disabled)
+            if (visitType === "FOLLOW_UP_RCT") {
+                const rctPreviouslyStarted = opdNumber ? await hasExistingRctCharge(opdNumber) : false;
+                if (requestToken !== billingStateRequestToken) return;
+                const btn = document.getElementById("appointmentBillingGetInvoiceBtn");
+                if (rctPreviouslyStarted) {
+                    // 2nd+ visit: no OPD fee, doctor handles everything
+                    isFirstFollowUpRctVisit = false;
+                    if (btn) btn.textContent = "Get Invoice";
+                    setBillingOptionDisabled(true, "No OPD fee for this RCT follow-up visit. Doctor will add RCT charges and generate the invoice during consultation.");
+                } else {
+                    // 1st visit: allow OPD fee — doctor will finalize during consultation
+                    isFirstFollowUpRctVisit = true;
+                    setBillingOptionDisabled(false);
+                    if (btn) btn.textContent = "Save OPD Fee";
+                    const resultBox = document.getElementById("appointmentBillingResult");
+                    const billingHint = document.getElementById("appointmentBillingHint");
+                    if (resultBox) {
+                        resultBox.className = "result-box result-success";
+                        resultBox.textContent = "First RCT visit: Add OPD consultation fee below. Doctor will add RCT charges and generate the invoice during consultation.";
+                    }
+                    if (billingHint) {
+                        billingHint.textContent = "Add OPD fee only. Invoice will be finalized by the doctor during consultation.";
+                        billingHint.style.color = "#1d4ed8";
+                    }
+                }
+                return;
+            }
+            isFirstFollowUpRctVisit = false;
+            const invoiceBtn = document.getElementById("appointmentBillingGetInvoiceBtn");
+            if (invoiceBtn) invoiceBtn.textContent = "Get Invoice";
 
             if (visitType !== "FOLLOW_UP" || !opdNumber) {
                 setBillingOptionDisabled(false);
@@ -639,8 +670,12 @@
         document.getElementById("appointmentBookForm").addEventListener("submit", async (e) => {
             e.preventDefault();
             const resultEl = document.getElementById("appointmentBookResult");
+            const summaryEl = document.getElementById("appointmentSummaryMessage");
             resultEl.className = "result-box";
             resultEl.textContent = "Booking...";
+            summaryEl.style.display = "block";
+            summaryEl.className = "result-box";
+            summaryEl.textContent = "Booking appointment...";
 
             const form = e.target;
             const patientName = form.elements.patient_name.value;
@@ -685,6 +720,22 @@
                         "Date: " + slotDate + "   Token: " + token + "\n\n" +
                         "Patient OPD Number: " + (data.patient_opd_number || "-");
                 }
+                const patientNameDisplay = (data.patient_name || patientName || (selectedPatient && selectedPatient.full_name) || "-");
+                latestAppointmentContext = {
+                    fullName: patientNameDisplay,
+                    phone: (selectedPatient && selectedPatient.phone) || "-",
+                    opdNumber: (data.patient_opd_number || data.opd_number || (selectedPatient && selectedPatient.opd_number) || "-"),
+                    doctorName,
+                    slotDate: slotDate || "-",
+                    visitType: form.elements.visit_type.value || "NEW",
+                    channel: emergencyMode ? "WALK_IN" : (form.elements.channel.value || "WALK_IN"),
+                    tokenText: emergencyMode
+                        ? `Emergency Queue Position: ${((data.queue_position || 0) + 1)}`
+                        : `Token: ${token || "-"}`,
+                    appointmentId: data.appointment_id || "-",
+                };
+                summaryEl.className = "result-box result-success";
+                summaryEl.innerHTML = renderOldPatientSummaryCard(latestAppointmentContext, "Appointment booked successfully.");
                 if (selectedPatient && selectedPatient.id) {
                     loadPatientAppointments(selectedPatient.id);
                 }
@@ -696,9 +747,12 @@
                     entity_not_found: "Patient or doctor not found. Please search again.",
                     patient_not_found: "Patient not found. Please search and select patient again.",
                     doctor_not_found: "Doctor not found. Please select a valid doctor.",
+                    follow_up_rct_not_allowed_for_general_clinic: "FOLLOW_UP_RCT is available only when Clinic Type is Dentist.",
                     validation_failed: "Please fill all required fields correctly.",
                 }[data.error] || (data.error || "Booking failed. Please try again.");
                 resultEl.textContent = msg;
+                summaryEl.className = "result-box result-error";
+                summaryEl.textContent = msg;
             }
         });
 
@@ -816,90 +870,6 @@
             }
         });
 
-        async function loadDayRescheduleAlerts() {
-            const resultEl = document.getElementById("dayRescheduleAlertsResult");
-            if (!resultEl) return;
-            const res = await fetch("/api/reception/day-reschedules/pending/", { credentials: "same-origin" });
-            const data = await res.json().catch(() => ({}));
-
-            if (!res.ok) {
-                resultEl.className = "result-box result-error";
-                resultEl.textContent = data.error || "Unable to load pending emergency reschedule alerts.";
-                return;
-            }
-
-            const items = data.items || [];
-            if (!items.length) {
-                resultEl.className = "result-box result-success";
-                resultEl.textContent = "No pending emergency reschedule decisions.";
-                return;
-            }
-
-            resultEl.className = "result-box result-error";
-            resultEl.innerHTML = `
-                <table style="width:100%; border-collapse:collapse;">
-                    <thead>
-                        <tr style="background:#ffdede;">
-                            <th style="border:1px solid #f2b4b4; padding:8px; text-align:left;">Doctor</th>
-                            <th style="border:1px solid #f2b4b4; padding:8px; text-align:left;">From</th>
-                            <th style="border:1px solid #f2b4b4; padding:8px; text-align:left;">To</th>
-                            <th style="border:1px solid #f2b4b4; padding:8px; text-align:left;">Appointments</th>
-                            <th style="border:1px solid #f2b4b4; padding:8px; text-align:left;">Overflow</th>
-                            <th style="border:1px solid #f2b4b4; padding:8px; text-align:left;">Action</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${items.map((item) => `
-                            <tr>
-                                <td style="border:1px solid #f2b4b4; padding:8px;">${escapeHtml(item.doctor_name)}</td>
-                                <td style="border:1px solid #f2b4b4; padding:8px;">${escapeHtml(item.source_date)}</td>
-                                <td style="border:1px solid #f2b4b4; padding:8px;">${escapeHtml(item.target_date)}</td>
-                                <td style="border:1px solid #f2b4b4; padding:8px;">${escapeHtml(item.total_appointments)}</td>
-                                <td style="border:1px solid #f2b4b4; padding:8px; color:#b91c1c;"><strong>${escapeHtml(item.overflow_count)}</strong></td>
-                                <td style="border:1px solid #f2b4b4; padding:8px; white-space:nowrap;">
-                                    <button type="button" data-action="decision-exceed" data-request-id="${item.request_id}">Approve & Exceed</button>
-                                    <button type="button" data-action="decision-cascade" data-request-id="${item.request_id}" style="margin-left:8px;">Move Excess Next Day</button>
-                                </td>
-                            </tr>
-                        `).join("")}
-                    </tbody>
-                </table>
-            `;
-        }
-
-        document.getElementById("dayRescheduleAlertsResult").addEventListener("click", async (e) => {
-            const btn = e.target.closest("button[data-action]");
-            if (!btn) return;
-
-            const requestId = btn.getAttribute("data-request-id");
-            const action = btn.getAttribute("data-action") === "decision-exceed" ? "EXCEED" : "CASCADE";
-            const confirmed = window.confirm(
-                action === "EXCEED"
-                    ? "Approve and exceed tomorrow's capacity for this doctor?"
-                    : "Move overflow appointments to next immediate day?"
-            );
-            if (!confirmed) return;
-
-            btn.disabled = true;
-            const body = new URLSearchParams({ action });
-            const res = await fetch(`/api/reception/day-reschedules/${requestId}/decide/`, {
-                method: "POST",
-                headers: { "X-CSRFToken": getCSRFToken(), "Content-Type": "application/x-www-form-urlencoded" },
-                body,
-                credentials: "same-origin",
-            });
-            const data = await res.json().catch(() => ({}));
-
-            if (!res.ok) {
-                alert(data.error || "Unable to apply decision.");
-                btn.disabled = false;
-                return;
-            }
-
-            await loadDayRescheduleAlerts();
-            alert("Decision saved and appointments rescheduled.");
-        });
-
         async function fetchNextToken() {
             const form = document.getElementById("appointmentBookForm");
             const doctorId = form.elements.doctor_id.value;
@@ -950,6 +920,26 @@
                 .replace(/>/g, "&gt;")
                 .replace(/\"/g, "&quot;")
                 .replace(/'/g, "&#039;");
+        }
+
+        function renderOldPatientSummaryCard(ctx, noteText = "") {
+            if (!ctx) return "";
+            let html = "<div class='summary-card'>";
+            html += "<div class='summary-card-title'>Patient & Appointment Summary</div>";
+            html += `<div class='summary-card-row'><strong>Name:</strong> ${escapeHtml(ctx.fullName)}</div>`;
+            html += `<div class='summary-card-row'><strong>Phone:</strong> ${escapeHtml(ctx.phone)} | <strong>OPD Number:</strong> ${escapeHtml(ctx.opdNumber)}</div>`;
+            html += `<div class='summary-card-row'><strong>Doctor:</strong> ${escapeHtml(ctx.doctorName)}</div>`;
+            html += `<div class='summary-card-row'><strong>Date:</strong> ${escapeHtml(ctx.slotDate)} | <strong>Visit Type:</strong> ${escapeHtml(ctx.visitType)} | <strong>Channel:</strong> ${escapeHtml(ctx.channel)}</div>`;
+            html += `<div class='summary-card-row'><strong>${escapeHtml(ctx.tokenText)}</strong></div>`;
+            html += `<div class='summary-card-row'><strong>Appointment ID:</strong> ${escapeHtml(ctx.appointmentId)}</div>`;
+            if (ctx.invoiceId) {
+                html += `<div class='summary-card-row'><strong>Invoice ID:</strong> ${escapeHtml(ctx.invoiceId)}</div>`;
+            }
+            if (noteText) {
+                html += `<div class='summary-card-note'>${escapeHtml(noteText)}</div>`;
+            }
+            html += "</div>";
+            return html;
         }
 
         function renderInvoiceCard(invoicePayload, options = {}) {
@@ -1254,10 +1244,6 @@
         }
 
         async function addOpdFeeLineItem(ledgerId, formData, resultBox) {
-            const visitType = String(document.querySelector('#appointmentBookForm select[name="visit_type"]')?.value || "").toUpperCase();
-            if (visitType === "FOLLOW_UP_RCT") {
-                return { ok: true, alreadyPresent: true, skipped: true };
-            }
 
             const lineItemPayload = new URLSearchParams({
                 line_type: "OPD_REPEAT_FEE",
@@ -1296,23 +1282,58 @@
 
         document.getElementById("appointmentBillingGetInvoiceBtn").addEventListener("click", async () => {
             const form = document.getElementById("appointmentBillingForm");
+            const summaryEl = document.getElementById("appointmentSummaryMessage");
             const resultBox = document.getElementById("appointmentBillingResult");
             const invoiceResultBox = document.getElementById("appointmentBillingInvoiceResult");
 
+            resultBox.style.display = "none";
+            invoiceResultBox.style.display = "none";
+            summaryEl.style.display = "block";
+
             if (billingDisabledForRctFollowUp) {
-                resultBox.className = "result-box result-error";
-                resultBox.textContent = "Billing option is disabled for FOLLOW_UP when RCT has started. Continue with the existing invoice ledger.";
+                summaryEl.className = "result-box result-error";
+                summaryEl.textContent = "Billing option is disabled for FOLLOW_UP when RCT has started. Continue with the existing invoice ledger.";
                 return;
             }
 
-            resultBox.className = "result-box";
-            resultBox.textContent = "Generating invoice...";
+            // 1st FOLLOW_UP_RCT visit: save OPD fee to OPEN ledger — do NOT finalize (doctor finalizes)
+            if (isFirstFollowUpRctVisit) {
+                summaryEl.className = "result-box";
+                summaryEl.textContent = "Saving OPD fee...";
+                invoiceResultBox.className = "result-box";
+                invoiceResultBox.textContent = "";
+                const formData = new FormData(form);
+                const ledgerResult = await createOrGetBillingLedger(formData, resultBox);
+                if (!ledgerResult) {
+                    summaryEl.className = "result-box result-error";
+                    summaryEl.textContent = resultBox.textContent || "Unable to create/open billing ledger.";
+                    return;
+                }
+                const feeResult = await addOpdFeeLineItem(ledgerResult.ledgerId, formData, resultBox);
+                if (!feeResult.ok && !feeResult.alreadyPresent) {
+                    summaryEl.className = "result-box result-error";
+                    summaryEl.textContent = resultBox.textContent || "Unable to add OPD fee.";
+                    return;
+                }
+                summaryEl.className = "result-box result-success";
+                summaryEl.textContent = "OPD fee saved. Doctor will add RCT charges and generate the final invoice during consultation.";
+                return;
+            }
+
+            summaryEl.className = "result-box";
+            if (latestAppointmentContext) {
+                summaryEl.innerHTML = renderOldPatientSummaryCard(latestAppointmentContext, "Generating invoice...");
+            } else {
+                summaryEl.textContent = "Generating invoice...";
+            }
             invoiceResultBox.className = "result-box";
             invoiceResultBox.textContent = "";
 
             const formData = new FormData(form);
             const ledgerResult = await createOrGetBillingLedger(formData, resultBox);
             if (!ledgerResult) {
+                summaryEl.className = "result-box result-error";
+                summaryEl.textContent = resultBox.textContent || "Unable to create/open billing ledger.";
                 return;
             }
             const visitType = String(document.querySelector('#appointmentBookForm select[name="visit_type"]')?.value || "").toUpperCase();
@@ -1328,13 +1349,13 @@
             if (isFollowUpRct && !invoiceId) {
                 const previousInvoiceId = ledgerResult.previousInvoiceId;
                 if (!previousInvoiceId) {
-                    resultBox.className = "result-box result-error";
-                    resultBox.textContent = "Previous billed invoice is required before FOLLOW_UP_RCT billing.";
+                    summaryEl.className = "result-box result-error";
+                    summaryEl.textContent = "Previous billed invoice is required before FOLLOW_UP_RCT billing.";
                     return;
                 }
 
-                resultBox.className = "result-box";
-                resultBox.textContent = "Copying previous invoice values...";
+                summaryEl.className = "result-box";
+                summaryEl.textContent = "Copying previous invoice values...";
 
                 const cloneResult = await cloneInvoiceToLedger(previousInvoiceId, ledgerId, resultBox);
                 if (!cloneResult.ok) {
@@ -1361,10 +1382,11 @@
                 if (!finalizeRes.ok) {
                     const errorMessage = {
                         mandatory_new_opd_fee_missing: "Copied invoice is missing OPD fee. Please verify previous invoice setup.",
+                        line_items_required: "Add at least one charge before finalizing invoice.",
                         ledger_not_found: "Billing ledger not found.",
                     }[finalizeData.error] || finalizeData.error || "Unable to finalize copied FOLLOW_UP_RCT invoice.";
-                    resultBox.className = "result-box result-error";
-                    resultBox.textContent = errorMessage;
+                    summaryEl.className = "result-box result-error";
+                    summaryEl.textContent = errorMessage;
                     return;
                 }
 
@@ -1422,17 +1444,18 @@
                 } else {
                     const errorMessage = {
                         mandatory_new_opd_fee_missing: "Please add OPD fee before finalizing bill.",
+                        line_items_required: "Add at least one charge before finalizing invoice.",
                         ledger_not_found: "Billing ledger not found.",
                     }[finalizeData.error] || finalizeData.error || "Unable to finalize bill.";
-                    resultBox.className = "result-box result-error";
-                    resultBox.textContent = errorMessage;
+                    summaryEl.className = "result-box result-error";
+                    summaryEl.textContent = errorMessage;
                     return;
                 }
             }
 
             if (!invoiceId) {
-                resultBox.className = "result-box result-error";
-                resultBox.textContent = "Unable to resolve invoice ID for this OPD.";
+                summaryEl.className = "result-box result-error";
+                summaryEl.textContent = "Unable to resolve invoice ID for this OPD.";
                 return;
             }
 
@@ -1448,30 +1471,39 @@
                 const errorMessage = {
                     invoice_not_found: "Invoice not found. Please verify Invoice ID.",
                 }[invoiceData.error] || invoiceData.error || "Unable to fetch invoice.";
-                invoiceResultBox.className = "result-box result-error";
-                invoiceResultBox.textContent = errorMessage;
+                summaryEl.className = "result-box result-error";
+                summaryEl.textContent = errorMessage;
                 return;
             }
 
             const invoicePayload = invoiceData.data || {};
-            resultBox.className = "result-box result-success";
-            resultBox.textContent = initialInvoiceId
-                ? `Existing invoice loaded. Invoice ID: ${invoicePayload.invoice_id || invoiceId}`
-                : `Invoice ready. Invoice ID: ${invoicePayload.invoice_id || invoiceId}`;
-            invoiceResultBox.className = "result-box result-success";
-            invoiceResultBox.innerHTML = renderInvoiceCard(invoicePayload, {
-                isFollowUpRct,
-                previousInvoice: previousInvoiceForHistory,
-            });
+            if (!latestAppointmentContext) {
+                latestAppointmentContext = {
+                    fullName: (selectedPatient && selectedPatient.full_name) || "-",
+                    phone: (selectedPatient && selectedPatient.phone) || "-",
+                    opdNumber: formData.get("opd_number") || "-",
+                    doctorName: document.querySelector('#appointmentBookForm select[name="doctor_id"] option:checked')?.textContent?.trim() || "-",
+                    slotDate: document.querySelector('#appointmentBookForm input[name="slot_date"]')?.value || "-",
+                    visitType: document.querySelector('#appointmentBookForm select[name="visit_type"]')?.value || "NEW",
+                    channel: document.querySelector('#appointmentBookForm select[name="channel"]')?.value || "WALK_IN",
+                    tokenText: `Token: ${document.querySelector('#appointmentBookForm input[name="token"]')?.value || "-"}`,
+                    appointmentId: formData.get("appointment_id") || "-",
+                };
+            }
+            latestAppointmentContext.invoiceId = invoicePayload.invoice_id || invoiceId;
+            summaryEl.className = "result-box result-success";
+            summaryEl.innerHTML = renderOldPatientSummaryCard(
+                latestAppointmentContext,
+                initialInvoiceId ? "Existing invoice loaded successfully." : "Invoice generated successfully."
+            );
         });
 
+        applyClinicVisitTypeOptions();
         setDefaultSlotDate();
         loadDoctors();
         toggleEmergencyBookingMode();
         applyBookingPrefillFromQuery();
         updateBillingOptionState();
-        loadDayRescheduleAlerts();
-        setInterval(loadDayRescheduleAlerts, 5000);
     </script>
 </div>
 {% endblock %}

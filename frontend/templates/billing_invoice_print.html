@@ -264,57 +264,6 @@
 
         <div class="section">
             <h3 class="section-title">Charges</h3>
-            {% if previous_line_items_display %}
-            <div class="row small" style="margin-bottom: 6px; margin-top: 4px;">
-                <div><strong>No 1.</strong></div>
-            </div>
-            <div class="row small" style="margin-bottom: 6px;">
-                <div><strong>Previous Bill No:</strong> {{ previous_bill_no|default:"-" }}</div>
-                <div><strong>Visit Date:</strong> {{ previous_visit_date|default:"-" }}</div>
-            </div>
-            <table>
-                <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>Type</th>
-                        <th>Description</th>
-                        <th>Amount</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for item in previous_line_items_display %}
-                    <tr>
-                        <td>{{ forloop.counter }}</td>
-                        <td>{{ item.line_type_display }}</td>
-                        <td>{{ item.description|default:"-" }}</td>
-                        <td>{{ item.amount }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-            {% if previous_payment_status %}
-            <div class="row small" style="margin-top: 6px; margin-bottom: 12px;">
-                <div><strong>Payment Status:</strong> {{ previous_payment_status }}</div>
-            </div>
-            {% endif %}
-            <div class="row small" style="margin-bottom: 6px; margin-top: 10px;">
-                <div><strong>No 2.</strong></div>
-            </div>
-            <div class="row small" style="margin-bottom: 6px;">
-                <div><strong>Current Bill No:</strong> {{ bill_number|default:"-" }}</div>
-                <div><strong>Visit Date:</strong> {{ visit_date|default:"-" }}</div>
-            </div>
-            {% else %}
-            {% if previous_bill_no or previous_visit_date %}
-            <div class="row small" style="margin-bottom: 6px; margin-top: 4px;">
-                <div><strong>No 1.</strong></div>
-            </div>
-            <div class="row small" style="margin-bottom: 8px;">
-                <div><strong>Previous Bill No:</strong> {{ previous_bill_no|default:"-" }}</div>
-                <div><strong>Visit Date:</strong> {{ previous_visit_date|default:"-" }}</div>
-            </div>
-            {% endif %}
-            {% endif %}
             <table>
                 <thead>
                     <tr>
@@ -339,11 +288,6 @@
                     {% endfor %}
                 </tbody>
             </table>
-            {% if not previous_line_items_display and previous_payment_status %}
-            <div class="row small" style="margin-top: 8px;">
-                <div><strong>Payment Status:</strong> {{ previous_payment_status }}</div>
-            </div>
-            {% endif %}
         </div>
 
         <table class="totals">

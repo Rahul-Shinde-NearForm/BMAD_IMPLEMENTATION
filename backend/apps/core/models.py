@@ -23,9 +23,16 @@ class Patient(models.Model):
 	state = models.CharField(max_length=80, blank=True, default="")
 	postal_code = models.CharField(max_length=20, blank=True, default="")
 	created_at = models.DateTimeField(auto_now_add=True)
+	# Denormalized search field — lowercase "first last" for fast equality/prefix lookups
+	searchable_full_name = models.CharField(max_length=205, blank=True, default="", db_index=True)
 
 	class Meta:
 		ordering = ["-created_at"]
+		indexes = [
+			models.Index(fields=["phone"], name="idx_patient_phone"),
+			models.Index(fields=["last_name", "first_name"], name="idx_patient_name"),
+			models.Index(fields=["created_at"], name="idx_patient_created_at"),
+		]
 
 	def __str__(self):
 		return f"{self.first_name} {self.last_name} ({self.phone})"
@@ -48,6 +55,8 @@ class Patient(models.Model):
 
 	def save(self, *args, **kwargs):
 		new_record = self.pk is None
+		# Keep denormalized search field in sync
+		self.searchable_full_name = f"{self.first_name} {self.last_name}".strip().lower()
 		super().save(*args, **kwargs)
 		update_fields = []
 		if new_record and not self.mrn:
@@ -188,6 +197,12 @@ class Appointment(models.Model):
 
 	class Meta:
 		ordering = ["-created_at"]
+		indexes = [
+			models.Index(fields=["patient_id", "slot_date", "status"], name="idx_appt_patient_date_status"),
+			models.Index(fields=["doctor_id", "slot_date", "status", "start_time"], name="idx_appt_dr_date_stat_time"),
+			models.Index(fields=["slot_date", "status"], name="idx_appt_slot_date_status"),
+			models.Index(fields=["created_at"], name="idx_appt_created_at"),
+		]
 
 	def save(self, *args, **kwargs):
 		new_record = self.pk is None
@@ -305,6 +320,11 @@ class Prescription(models.Model):
 
 	class Meta:
 		ordering = ["-issued_at"]
+		indexes = [
+			models.Index(fields=["patient_id", "issued_at"], name="idx_rx_patient_issued"),
+			models.Index(fields=["doctor_id", "issued_at"], name="idx_rx_doctor_issued"),
+			models.Index(fields=["consultation_id"], name="idx_rx_consultation"),
+		]
 
 	def save(self, *args, **kwargs):
 		new_record = self.pk is None
@@ -362,6 +382,9 @@ class QueueItem(models.Model):
 	class Meta:
 		ordering = ["slot_date", "token_number"]
 		unique_together = ("doctor", "slot_date", "token_number")
+		indexes = [
+			models.Index(fields=["doctor_id", "slot_date", "status", "token_number"], name="idx_queue_dr_date_stat_tok"),
+		]
 
 
 class QueueEvent(models.Model):
@@ -451,7 +474,11 @@ class BillingLedger(models.Model):
 		ordering = ["-created_at"]
 		indexes = [
 			models.Index(fields=["opd_number"], name="core_billin_opd_num_cdce7a_idx"),
-			models.Index(fields=["status"]),
+			models.Index(fields=["status"], name="idx_ledger_status"),
+			models.Index(fields=["patient_id", "visit_date"], name="idx_ledger_patient_visit"),
+			models.Index(fields=["doctor_id", "visit_date", "status"], name="idx_ledger_doctor_visit_status"),
+			models.Index(fields=["appointment_id"], name="idx_ledger_appointment"),
+			models.Index(fields=["created_at"], name="idx_ledger_created_at"),
 		]
 
 
@@ -484,7 +511,8 @@ class BillingLineItem(models.Model):
 	class Meta:
 		ordering = ["created_at"]
 		indexes = [
-			models.Index(fields=["ledger", "line_type"]),
+			models.Index(fields=["ledger", "line_type"], name="idx_lineitem_ledger_line_type"),
+			models.Index(fields=["ledger_id", "created_at"], name="idx_lineitem_ledger_created"),
 		]
 
 
@@ -514,9 +542,16 @@ class BillingInvoice(models.Model):
 	paid_at = models.DateTimeField(null=True, blank=True)
 	created_by = models.CharField(max_length=150)
 	created_at = models.DateTimeField(auto_now_add=True)
+	# Denormalized: stores current-visit-only total for FOLLOW_UP_RCT invoices (avoids runtime line-item slicing)
+	current_visit_total = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, default=None)
 
 	class Meta:
 		ordering = ["-created_at"]
+		indexes = [
+			models.Index(fields=["created_at"], name="idx_invoice_created_at"),
+			models.Index(fields=["payment_status", "created_at"], name="idx_invoice_status_created"),
+			models.Index(fields=["ledger_id"], name="idx_invoice_ledger"),
+		]
 
 	def save(self, *args, **kwargs):
 		new_record = self.pk is None
@@ -659,8 +694,14 @@ class UserProfile(models.Model):
 
 
 class ClinicSettings(models.Model):
+	CLINIC_TYPE_CHOICES = [
+		("GENERAL", "General"),
+		("DENTIST", "Dentist"),
+	]
+
 	clinic_name = models.CharField(max_length=255, default="OPD Clinic")
 	clinic_address = models.TextField(blank=True, default="")
+	clinic_type = models.CharField(max_length=20, choices=CLINIC_TYPE_CHOICES, default="GENERAL")
 	clinic_phone = models.CharField(max_length=20, blank=True, default="")
 	clinic_mob = models.CharField(max_length=20, blank=True, default="")
 	upi_id = models.CharField(max_length=100, blank=True, default="")
@@ -676,6 +717,7 @@ class ClinicSettings(models.Model):
 			defaults={
 				"clinic_name": "OPD Clinic",
 				"clinic_address": "",
+				"clinic_type": "GENERAL",
 				"clinic_phone": "",
 				"clinic_mob": "",
 				"upi_id": "",

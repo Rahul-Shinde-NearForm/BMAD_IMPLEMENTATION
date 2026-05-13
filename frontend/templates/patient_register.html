@@ -32,6 +32,34 @@
             margin-top: 1rem;
         }
 
+        .summary-card {
+            background: #f8fbff;
+            border: 1px solid #cfe0ff;
+            border-radius: 8px;
+            padding: 0.75rem;
+            margin-top: 0.5rem;
+            display: grid;
+            gap: 0.3rem;
+        }
+
+        .summary-card-title {
+            font-weight: 700;
+            color: #173b7a;
+            margin-bottom: 0.15rem;
+        }
+
+        .summary-card-row {
+            font-size: 0.93rem;
+            color: #1f2937;
+            line-height: 1.3;
+        }
+
+        .summary-card-note {
+            margin-top: 0.5rem;
+            font-weight: 700;
+            color: #14532d;
+        }
+
         @media (max-width: 1200px) {
             .registration-layout {
                 grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
@@ -94,6 +122,7 @@
                         <select name="visit_type">
                             <option value="NEW">NEW</option>
                             <option value="FOLLOW_UP">FOLLOW_UP</option>
+                            <option value="FOLLOW_UP_RCT">FOLLOW_UP_RCT</option>
                         </select>
                     </label>
                     <label>Channel
@@ -121,14 +150,36 @@
                 <label>Description <input type="text" name="description" value="OPD Registration Fee" /></label>
                 <div><button type="button" id="patientBillingGetInvoiceBtn">Get Invoice</button></div>
             </form>
-            <pre id="patientBillingResult" class="result-box"></pre>
-            <div id="patientBillingInvoiceResult" class="result-box"></div>
+            <div id="patientBillingResult" class="result-box" style="display:none;"></div>
+            <div id="patientBillingInvoiceResult" class="result-box" style="display:none;"></div>
         </section>
     </div>
 
     <script>
         // Global variable to store doctor data
         let doctorsData = [];
+        let latestRegisteredContext = null;
+        const CLINIC_TYPE = "{{ clinic_type|default:'GENERAL'|upper|escapejs }}";
+        const IS_DENTIST_CLINIC = CLINIC_TYPE === "DENTIST";
+
+        function applyClinicVisitTypeOptions() {
+            const visitTypeSelect = document.querySelector('#patientRegisterForm select[name="visit_type"]');
+            if (!visitTypeSelect) return;
+            const rctOption = visitTypeSelect.querySelector('option[value="FOLLOW_UP_RCT"]');
+            if (!rctOption) return;
+
+            if (IS_DENTIST_CLINIC) {
+                rctOption.hidden = false;
+                rctOption.disabled = false;
+                return;
+            }
+
+            if (visitTypeSelect.value === "FOLLOW_UP_RCT") {
+                visitTypeSelect.value = "NEW";
+            }
+            rctOption.hidden = true;
+            rctOption.disabled = true;
+        }
 
         function getCSRFToken() {
             const match = document.cookie.match(/csrftoken=([^;]+)/);
@@ -145,6 +196,27 @@
                 .replace(/'/g, "&#039;");
         }
 
+        function renderRegisteredSummaryCard(ctx, noteText = "") {
+            if (!ctx) return "";
+            let html = "<div class='summary-card'>";
+            html += "<div class='summary-card-title'>Patient & Appointment Summary</div>";
+            html += `<div class='summary-card-row'><strong>Name:</strong> ${escapeHtml(ctx.fullName)}</div>`;
+            html += `<div class='summary-card-row'><strong>Phone:</strong> ${escapeHtml(ctx.phone)} | <strong>Age:</strong> ${escapeHtml(ctx.age)} | <strong>Gender:</strong> ${escapeHtml(ctx.gender)}</div>`;
+            html += `<div class='summary-card-row'><strong>OPD Number:</strong> ${escapeHtml(ctx.opdNumber)}</div>`;
+            html += `<div class='summary-card-row'><strong>Doctor:</strong> ${escapeHtml(ctx.doctorName)}</div>`;
+            html += `<div class='summary-card-row'><strong>Date:</strong> ${escapeHtml(ctx.slotDate)} | <strong>Visit Type:</strong> ${escapeHtml(ctx.visitType)} | <strong>Channel:</strong> ${escapeHtml(ctx.channel)}</div>`;
+            html += `<div class='summary-card-row'><strong>${escapeHtml(ctx.tokenText)}</strong></div>`;
+            html += `<div class='summary-card-row'><strong>Appointment ID:</strong> ${escapeHtml(ctx.appointmentId)}</div>`;
+            if (ctx.invoiceId) {
+                html += `<div class='summary-card-row'><strong>Invoice ID:</strong> ${escapeHtml(ctx.invoiceId)}</div>`;
+            }
+            if (noteText) {
+                html += `<div class='summary-card-note'>${escapeHtml(noteText)}</div>`;
+            }
+            html += "</div>";
+            return html;
+        }
+
         function autoPopulateOpdFee() {
             const form = document.getElementById("patientRegisterForm");
             const doctorId = form.elements.doctor_id.value;
@@ -156,69 +228,6 @@
             if (selectedDoctor && selectedDoctor.opd_new_patient_fee) {
                 billingForm.elements.amount.value = selectedDoctor.opd_new_patient_fee;
             }
-        }
-
-        function renderInvoiceCard(invoicePayload) {
-            const lineItems = invoicePayload.line_items || [];
-            const totals = invoicePayload.totals || {};
-            const patient = invoicePayload.patient || {};
-            const doctor = invoicePayload.doctor || {};
-            const clinicName = invoicePayload.clinic_name || "OPD Clinic";
-            const printUrl = invoicePayload.print_url || "";
-            const pdfUrl = invoicePayload.pdf_download_url || "";
-
-            let html = "<div style='display:flex; justify-content:space-between; gap:1rem; align-items:flex-start; flex-wrap:wrap;'>";
-            html += "<div>";
-            html += `<strong>Bill No:</strong> ${escapeHtml(invoicePayload.bill_number)}<br>`;
-            html += `<strong>Invoice ID:</strong> ${escapeHtml(invoicePayload.invoice_id)}<br>`;
-            html += `<strong>OPD Number:</strong> ${escapeHtml(invoicePayload.opd_number)}<br>`;
-            html += `<strong>Visit Date:</strong> ${escapeHtml(invoicePayload.visit_date)}<br>`;
-            html += `<strong>Clinic:</strong> ${escapeHtml(clinicName)}<br>`;
-            html += `<strong>Created At:</strong> ${escapeHtml(invoicePayload.created_at)}`;
-            html += "</div>";
-            html += "<div style='display:flex; gap:0.5rem; align-items:center;'>";
-            if (printUrl) {
-                html += `<a href='${escapeHtml(printUrl)}?print=1' target='_blank' class='btn-link'>Print</a>`;
-            }
-            if (pdfUrl) {
-                html += `<a href='${escapeHtml(pdfUrl)}' class='btn-link'>Download PDF</a>`;
-            }
-            html += "</div>";
-            html += "</div>";
-
-            html += "<hr style='margin:0.9rem 0; border:none; border-top:1px solid #d9e4f5;'>";
-            html += `<strong>Patient:</strong> ${escapeHtml(patient.name)} | ${escapeHtml(patient.phone)}<br>`;
-            html += `<strong>Doctor:</strong> ${escapeHtml(doctor.name)} (${escapeHtml(doctor.specialty)})`;
-
-            html += "<table style='width:100%; border-collapse:collapse; margin-top:0.9rem;'>";
-            html += "<thead><tr style='background:#dce8ff; font-weight:600;'>";
-            html += "<th style='border:1px solid #c6d7fa; padding:8px; text-align:left;'>Description</th>";
-            html += "<th style='border:1px solid #c6d7fa; padding:8px; text-align:left;'>Type</th>";
-            html += "<th style='border:1px solid #c6d7fa; padding:8px; text-align:right;'>Amount</th>";
-            html += "</tr></thead><tbody>";
-
-            if (!lineItems.length) {
-                html += "<tr><td colspan='3' style='border:1px solid #c6d7fa; padding:8px;'>No line items.</td></tr>";
-            } else {
-                html += lineItems.map((item) => (
-                    "<tr>" +
-                    `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.description)}</td>` +
-                    `<td style='border:1px solid #c6d7fa; padding:8px;'>${escapeHtml(item.line_type)}</td>` +
-                    `<td style='border:1px solid #c6d7fa; padding:8px; text-align:right;'>${escapeHtml(item.amount)}</td>` +
-                    "</tr>"
-                )).join("");
-            }
-
-            html += "</tbody></table>";
-
-            html += "<div style='margin-top:0.9rem; display:grid; gap:0.3rem; justify-content:end;'>";
-            html += `<div><strong>Subtotal:</strong> ${escapeHtml(totals.subtotal)}</div>`;
-            html += `<div><strong>Discount:</strong> ${escapeHtml(totals.discount)}</div>`;
-            html += `<div><strong>Tax:</strong> ${escapeHtml(totals.tax)}</div>`;
-            html += `<div><strong>Total:</strong> ${escapeHtml(totals.total)}</div>`;
-            html += "</div>";
-
-            return html;
         }
 
         function setDefaultSlotDate() {
@@ -333,9 +342,16 @@
             const data = await res.json().catch(() => ({}));
             messageBox.style.display = "block";
 
-            if (res.ok) {
-                const isEmergency = formData.get("is_emergency") === "on" || formData.get("is_emergency") === "true";
+            const fullName = `${(formData.get("first_name") || "").trim()} ${(formData.get("last_name") || "").trim()}`.trim();
+            const genderMap = { M: "Male", F: "Female", O: "Other" };
+            const selectedDoctorName = form.querySelector('select[name="doctor_id"] option:checked')?.textContent?.trim() || "-";
+            const isEmergency = formData.get("is_emergency") === "on" || formData.get("is_emergency") === "true";
+            const patientSummary =
+                `Patient: ${fullName || "-"}\n` +
+                `Phone: ${formData.get("phone") || "-"} | Age: ${formData.get("age") || "-"} | Gender: ${genderMap[formData.get("gender")] || formData.get("gender") || "-"}\n` +
+                `OPD Number: ${data.opd_number || "-"}`;
 
+            if (res.ok) {
                 const appointmentPayload = new URLSearchParams({
                     patient_id: data.patient_id,
                     doctor_id: formData.get("doctor_id") || "",
@@ -366,9 +382,24 @@
                 if (appointmentRes.ok) {
                     messageBox.className = "result-box result-success";
                     const tokenText = isEmergency ? "(Emergency - Priority Queue)" : `Token: ${formData.get("token") || "-"}`;
-                    messageBox.textContent =
-                        `Patient successfully added. OPD Number: ${data.opd_number}\n` +
-                        `Appointment booked successfully. ${tokenText}`;
+                    latestRegisteredContext = {
+                        fullName: fullName || "-",
+                        phone: formData.get("phone") || "-",
+                        age: formData.get("age") || "-",
+                        gender: genderMap[formData.get("gender")] || formData.get("gender") || "-",
+                        opdNumber: data.opd_number || "-",
+                        doctorName: selectedDoctorName || "-",
+                        slotDate: formData.get("slot_date") || "-",
+                        visitType: formData.get("visit_type") || "NEW",
+                        channel: formData.get("channel") || "WALK_IN",
+                        tokenText,
+                        appointmentId: appointmentData.appointment_id || "-",
+                    };
+
+                    messageBox.innerHTML = renderRegisteredSummaryCard(
+                        latestRegisteredContext,
+                        "Patient registered and appointment booked successfully."
+                    );
 
                     const billingForm = document.getElementById("patientBillingForm");
                     if (billingForm) {
@@ -382,11 +413,12 @@
                         invalid_slot: "Doctor is not available on this date. Please select another date.",
                         invalid_token: "Doctor is not available on this date. No appointment slots have been set up for this date.",
                         entity_not_found: "Patient or doctor not found. Please try again.",
+                        follow_up_rct_not_allowed_for_general_clinic: "FOLLOW_UP_RCT is available only when Clinic Type is Dentist.",
                         validation_failed: "Please fill all required fields correctly.",
                     }[appointmentData.error] || (appointmentData.error || "Appointment booking failed.");
                     messageBox.textContent =
-                        `Patient successfully added. OPD Number: ${data.opd_number}\n` +
-                        appointmentErrorMessage;
+                        `Patient successfully added.\n${patientSummary}\n\n` +
+                        `Appointment booking failed: ${appointmentErrorMessage}`;
 
                     const billingForm = document.getElementById("patientBillingForm");
                     if (billingForm) {
@@ -399,6 +431,7 @@
                 setDefaultSlotDate();
                 document.getElementById("capacityInfo").textContent = "";
                 document.getElementById("tokenInput").value = "";
+                applyClinicVisitTypeOptions();
                 loadDoctors();
                 return;
             }
@@ -510,17 +543,25 @@
 
         document.getElementById("patientBillingGetInvoiceBtn").addEventListener("click", async () => {
             const form = document.getElementById("patientBillingForm");
+            const messageBox = document.getElementById("patientRegisterMessage");
             const resultBox = document.getElementById("patientBillingResult");
             const invoiceResultBox = document.getElementById("patientBillingInvoiceResult");
 
-            resultBox.className = "result-box";
-            resultBox.textContent = "Generating invoice...";
-            invoiceResultBox.className = "result-box";
-            invoiceResultBox.textContent = "";
+            resultBox.style.display = "none";
+            invoiceResultBox.style.display = "none";
+            messageBox.style.display = "block";
+            messageBox.className = "result-box";
+            if (latestRegisteredContext) {
+                messageBox.innerHTML = renderRegisteredSummaryCard(latestRegisteredContext, "Generating invoice...");
+            } else {
+                messageBox.textContent = "Generating invoice...";
+            }
 
             const formData = new FormData(form);
             const ledgerResult = await createOrGetBillingLedger(formData, resultBox);
             if (!ledgerResult) {
+                messageBox.className = "result-box result-error";
+                messageBox.textContent = resultBox.textContent || "Unable to create/open billing ledger.";
                 return;
             }
             const ledgerId = ledgerResult.ledgerId;
@@ -530,6 +571,8 @@
 
             const feeResult = await addOpdFeeLineItem(ledgerId, formData, resultBox);
             if (!feeResult.ok) {
+                messageBox.className = "result-box result-error";
+                messageBox.textContent = resultBox.textContent || "Unable to add OPD fee.";
                 return;
             }
 
@@ -566,20 +609,17 @@
                         mandatory_new_opd_fee_missing: "Please add OPD fee before finalizing bill.",
                         ledger_not_found: "Billing ledger not found.",
                     }[finalizeData.error] || finalizeData.error || "Unable to finalize bill.";
-                    resultBox.className = "result-box result-error";
-                    resultBox.textContent = errorMessage;
+                    messageBox.className = "result-box result-error";
+                    messageBox.textContent = errorMessage;
                     return;
                 }
             }
 
             if (!invoiceId) {
-                resultBox.className = "result-box result-error";
-                resultBox.textContent = "Unable to resolve invoice ID for this OPD.";
+                messageBox.className = "result-box result-error";
+                messageBox.textContent = "Unable to resolve invoice ID for this OPD.";
                 return;
             }
-
-            invoiceResultBox.className = "result-box";
-            invoiceResultBox.textContent = "Loading invoice...";
 
             const invoiceRes = await fetch(`/api/billing/invoice/${encodeURIComponent(invoiceId)}/`, {
                 credentials: "same-origin",
@@ -590,16 +630,22 @@
                 const errorMessage = {
                     invoice_not_found: "Invoice not found. Please verify Invoice ID.",
                 }[invoiceData.error] || invoiceData.error || "Unable to fetch invoice.";
-                invoiceResultBox.className = "result-box result-error";
-                invoiceResultBox.textContent = errorMessage;
+                messageBox.className = "result-box result-error";
+                messageBox.textContent = errorMessage;
                 return;
             }
 
             const invoicePayload = invoiceData.data || {};
-            resultBox.className = "result-box result-success";
-            resultBox.textContent = `Invoice ready. Invoice ID: ${invoicePayload.invoice_id || invoiceId}`;
-            invoiceResultBox.className = "result-box result-success";
-            invoiceResultBox.innerHTML = renderInvoiceCard(invoicePayload);
+            messageBox.className = "result-box result-success";
+            if (latestRegisteredContext) {
+                latestRegisteredContext.invoiceId = invoicePayload.invoice_id || invoiceId;
+                messageBox.innerHTML = renderRegisteredSummaryCard(
+                    latestRegisteredContext,
+                    "Invoice generated successfully."
+                );
+            } else {
+                messageBox.textContent = `Invoice ID: ${invoicePayload.invoice_id || invoiceId}`;
+            }
         });
 
         document.querySelector('#patientRegisterForm input[name="slot_date"]').addEventListener("change", async () => {
@@ -613,6 +659,7 @@
         });
 
         (async () => {
+            applyClinicVisitTypeOptions();
             setDefaultSlotDate();
             await loadDoctors().catch((error) => {
                 console.error("Failed to load doctors on page load:", error);

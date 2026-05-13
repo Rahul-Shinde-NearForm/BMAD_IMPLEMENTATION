@@ -450,7 +450,8 @@ def queue_mark_called_for_appointment(appointment_id, actor_username):
 
 def patient_opd_history(patient_id, limit=20):
     qs = (
-        Appointment.objects.filter(patient_id=patient_id)
+        Appointment.objects.select_related("doctor", "patient")
+        .filter(patient_id=patient_id)
         .exclude(opd_number__isnull=True)
         .exclude(opd_number="")
         .order_by("-created_at")[:limit]
@@ -509,9 +510,15 @@ def sync_queue_for_day(doctor_id, slot_date):
         status__in=["BOOKED", "RESCHEDULED"],
     ).order_by("created_at")
 
+    # Batch-fetch existing queue appointment_ids to avoid per-row hasattr queries
+    existing_queue_ids = set(
+        QueueItem.objects.filter(doctor_id=doctor_id, slot_date=slot_date)
+        .values_list("appointment_id", flat=True)
+    )
+
     created_count = 0
     for appointment in active_appointments:
-        if hasattr(appointment, "queue_item"):
+        if appointment.id in existing_queue_ids:
             continue
         QueueItem.objects.create(
             appointment=appointment,
@@ -520,6 +527,7 @@ def sync_queue_for_day(doctor_id, slot_date):
             token_number=_next_token_number(doctor_id, slot_date),
             status="WAITING",
         )
+        existing_queue_ids.add(appointment.id)
         created_count += 1
     return created_count
 
@@ -1043,13 +1051,16 @@ def send_billing_handoff(handoff_id: int, actor_username: str = "system") -> Bil
 
 
 def list_billing_handoffs(status: str = None, date_from: str = None, date_to: str = None) -> list:
+    from datetime import date as date_type
     qs = BillingHandoff.objects.select_related("consultation", "patient").all()
     if status:
         qs = qs.filter(status=status)
     if date_from:
-        qs = qs.filter(created_at__date__gte=date_from)
+        df = date_type.fromisoformat(date_from) if isinstance(date_from, str) else date_from
+        qs = qs.filter(created_at__gte=df)
     if date_to:
-        qs = qs.filter(created_at__date__lte=date_to)
+        dt = date_type.fromisoformat(date_to) if isinstance(date_to, str) else date_to
+        qs = qs.filter(created_at__lt=dt + timedelta(days=1))
     return list(qs)
 
 
@@ -1177,7 +1188,7 @@ def create_or_get_active_billing_ledger(opd_number, actor_username, appointment_
         return ledger, True
 
     open_ledgers = (
-        BillingLedger.objects.select_for_update()
+        BillingLedger.objects.select_for_update(of=("self",))
         .filter(opd_number=opd_number, status="OPEN", invoice__isnull=True)
         .order_by("-created_at")
     )
@@ -1245,17 +1256,17 @@ def add_billing_line_item(ledger_id, line_type, amount, actor_username, descript
 
     # Validate RCT multi-sitting recovery fields if provided.
     # Keep all RCT stage entries (don't delete previous ones) to show cumulative recovery.
-    if total_case_amount or recovery_stage_percent:
-        if not (total_case_amount and recovery_stage_percent):
-            raise ValueError("total_case_amount_and_recovery_stage_required")
-        if recovery_stage_percent not in {25, 50, 75, 100}:
-            raise ValueError("invalid_recovery_stage_percent")
+    if total_case_amount:
         total_case_amt = Decimal(str(total_case_amount))
         if total_case_amt <= Decimal("0"):
             raise ValueError("invalid_total_case_amount")
-        calculated_amount = (total_case_amt * Decimal(recovery_stage_percent)) / Decimal(100)
-        if amount_decimal != calculated_amount:
-            amount_decimal = calculated_amount
+        # recovery_stage_percent is optional; if provided it must be a valid value
+        if recovery_stage_percent is not None:
+            if recovery_stage_percent not in {25, 50, 75, 100}:
+                raise ValueError("invalid_recovery_stage_percent")
+    elif recovery_stage_percent is not None:
+        # recovery_stage_percent without total_case_amount is still not meaningful
+        raise ValueError("total_case_amount_and_recovery_stage_required")
 
     # Allow only one OPD consultation fee per ledger (either NEW or REPEAT).
     if line_type in {"OPD_NEW_FEE", "OPD_REPEAT_FEE"}:
@@ -1340,11 +1351,48 @@ def _billing_subtotal(ledger):
     return total
 
 
+def _update_invoice_current_visit_total(invoice, ledger):
+    """
+    Compute and persist current_visit_total on the invoice.
+    For FOLLOW_UP_RCT with a paid previous bill, stores only the current-visit
+    line item sum. For all other cases, mirrors invoice.total.
+    """
+    if ledger.visit_type != "FOLLOW_UP_RCT":
+        if invoice.current_visit_total != invoice.total:
+            invoice.current_visit_total = invoice.total
+            invoice.save(update_fields=["current_visit_total"])
+        return
+
+    prev_invoice = (
+        BillingInvoice.objects
+        .select_related("ledger")
+        .filter(ledger__patient_id=ledger.patient_id, created_at__lt=invoice.created_at)
+        .exclude(id=invoice.id)
+        .order_by("-created_at")
+        .first()
+    )
+    if not prev_invoice or prev_invoice.payment_status != "DONE":
+        new_val = invoice.total
+    else:
+        n_cloned = BillingLineItem.objects.filter(ledger_id=prev_invoice.ledger_id).count()
+        all_items = list(BillingLineItem.objects.filter(ledger_id=ledger.id).order_by("created_at"))
+        current_items = all_items[n_cloned:]
+        new_val = sum((item.amount or Decimal("0")) for item in current_items)
+
+    if invoice.current_visit_total != new_val:
+        invoice.current_visit_total = new_val
+        invoice.save(update_fields=["current_visit_total"])
+
+
 @transaction.atomic
 def finalize_billing_ledger(ledger_id, actor_username, tax=0, discount=0):
     ledger = BillingLedger.objects.select_for_update().get(id=ledger_id)
     if ledger.status == "FINALIZED":
         raise ValueError("already_finalized")
+
+    # Do not allow creating zero-value/empty invoices.
+    if not ledger.line_items.exists():
+        raise ValueError("line_items_required")
 
     if ledger.visit_type == "FOLLOW_UP" and ledger.repeat_fee_decision == "NO" and not ledger.repeat_fee_reason.strip():
         raise ValueError("repeat_fee_reason_required")
@@ -1375,6 +1423,9 @@ def finalize_billing_ledger(ledger_id, actor_username, tax=0, discount=0):
         invoice.tax = tax_decimal
         invoice.total = total
         invoice.save(update_fields=["subtotal", "discount", "tax", "total"])
+
+    # Compute and persist current_visit_total (denormalized field for fast reads)
+    _update_invoice_current_visit_total(invoice, ledger)
 
     ledger.status = "FINALIZED"
     ledger.finalized_by = actor_username
